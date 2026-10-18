@@ -1,0 +1,2 @@
+# 并行跑 widget 测试时偶发 "did not complete"（资源竞争），串行执行保证稳定。
+concurrency: 1
