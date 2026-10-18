@@ -6,6 +6,7 @@ import 'data/chat_repository_factory.dart';
 import 'data/translation_service.dart';
 import 'data/translation_service_factory.dart';
 import 'screens/home_shell.dart';
+import 'screens/login_page.dart';
 import 'state/app_scope.dart';
 import 'state/app_store.dart';
 import 'theme/app_theme.dart';
@@ -15,10 +16,12 @@ class CsImApp extends StatefulWidget {
     super.key,
     this.translationService,
     this.enablePersistence = true,
+    this.requireLogin,
   });
 
   final TranslationService? translationService;
   final bool enablePersistence;
+  final bool? requireLogin;
 
   @override
   State<CsImApp> createState() => _CsImAppState();
@@ -30,17 +33,44 @@ class _CsImAppState extends State<CsImApp> {
     widget.translationService ?? createTranslationService(),
     persistenceEnabled: widget.enablePersistence,
   );
+  bool _authenticated = false;
 
   @override
   void initState() {
     super.initState();
-    unawaited(_store.init());
+    _authenticated = !(widget.requireLogin ?? widget.enablePersistence);
+    if (_authenticated) {
+      unawaited(_store.init());
+    }
   }
 
   @override
   void dispose() {
     _store.dispose();
     super.dispose();
+  }
+
+  Future<void> _login({
+    required String account,
+    required String password,
+  }) async {
+    // The mock repository has no remote handshake yet. Keep this boundary
+    // ready for the account/password auth endpoint.
+    await Future<void>.delayed(const Duration(milliseconds: 280));
+    if (!mounted) {
+      return;
+    }
+    setState(() => _authenticated = true);
+    if (_store.loading) {
+      unawaited(_store.init());
+    }
+  }
+
+  void _logout() {
+    if (!mounted) {
+      return;
+    }
+    setState(() => _authenticated = false);
   }
 
   @override
@@ -64,7 +94,9 @@ class _CsImAppState extends State<CsImApp> {
             theme: buildAppTheme(Brightness.light),
             darkTheme: buildAppTheme(Brightness.dark),
             themeMode: mode,
-            home: const HomeShell(),
+            home: _authenticated
+                ? HomeShell(onLogout: _logout)
+                : LoginPage(onLogin: _login),
           );
         },
       ),

@@ -10,7 +10,9 @@ import 'me_page.dart';
 import 'status_page.dart';
 
 class HomeShell extends StatefulWidget {
-  const HomeShell({super.key});
+  const HomeShell({super.key, this.onLogout});
+
+  final VoidCallback? onLogout;
 
   @override
   State<HomeShell> createState() => _HomeShellState();
@@ -42,7 +44,11 @@ class _HomeShellState extends State<HomeShell> {
                   decoration: BoxDecoration(color: AppColors.surface),
                   child: IndexedStack(
                     index: _index,
-                    children: const [DutyPage(), StatusPage(), MePage()],
+                    children: [
+                      const DutyPage(),
+                      const StatusPage(),
+                      MePage(onLogout: widget.onLogout),
+                    ],
                   ),
                 ),
                 Positioned(

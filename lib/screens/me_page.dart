@@ -11,7 +11,9 @@ import 'privacy_policy_page.dart';
 import 'storage_space_page.dart';
 
 class MePage extends StatefulWidget {
-  const MePage({super.key});
+  const MePage({super.key, this.onLogout});
+
+  final VoidCallback? onLogout;
 
   @override
   State<MePage> createState() => _MePageState();
@@ -107,11 +109,13 @@ class _MePageState extends State<MePage> {
           ),
           const SizedBox(height: 22),
           FilledButton.icon(
-            onPressed: () {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('V1 原型：登录与退出将在接入后端后提供')),
-              );
-            },
+            onPressed:
+                widget.onLogout ??
+                () {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('V1 原型：登录与退出将在接入后端后提供')),
+                  );
+                },
             style: FilledButton.styleFrom(
               minimumSize: const Size.fromHeight(50),
               backgroundColor: AppColors.danger,

@@ -5,6 +5,84 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  testWidgets('默认启动展示登录页并可进入工作区', (WidgetTester tester) async {
+    await tester.pumpWidget(
+      const CsImApp(enablePersistence: false, requireLogin: true),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('进入客服值守'), findsOneWidget);
+    expect(find.text('服务地址'), findsNothing);
+    expect(find.byKey(const ValueKey('login-account')), findsOneWidget);
+    expect(find.byKey(const ValueKey('login-password')), findsOneWidget);
+    expect(find.text('请输入账号'), findsNothing);
+
+    await tester.ensureVisible(find.text('进入工作区'));
+    await tester.tap(find.text('进入工作区'));
+    await tester.pumpAndSettle();
+    expect(find.text('请输入账号'), findsOneWidget);
+    expect(find.text('请输入密码'), findsOneWidget);
+
+    await tester.enterText(
+      find.byKey(const ValueKey('login-account')),
+      'demo-account',
+    );
+    await tester.enterText(
+      find.byKey(const ValueKey('login-password')),
+      'demo-password',
+    );
+    await tester.ensureVisible(
+      find.byKey(const ValueKey('login-policy-checkbox')),
+    );
+    await tester.tap(find.byKey(const ValueKey('login-policy-checkbox')));
+    await tester.ensureVisible(find.text('进入工作区'));
+    await tester.tap(find.text('进入工作区'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('橙子科技'), findsOneWidget);
+    expect(find.text('移动值守'), findsOneWidget);
+  });
+
+  testWidgets('登录页可以查看接入说明并从工作区退出', (WidgetTester tester) async {
+    await tester.pumpWidget(
+      const CsImApp(enablePersistence: false, requireLogin: true),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.ensureVisible(find.text('查看接入说明'));
+    await tester.tap(find.text('查看接入说明'));
+    await tester.pumpAndSettle();
+    expect(find.text('如何接入工作区'), findsOneWidget);
+    await tester.tap(find.text('知道了'));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(
+      find.byKey(const ValueKey('login-account')),
+      'demo-account',
+    );
+    await tester.enterText(
+      find.byKey(const ValueKey('login-password')),
+      'demo-password',
+    );
+    await tester.ensureVisible(
+      find.byKey(const ValueKey('login-policy-checkbox')),
+    );
+    await tester.tap(find.byKey(const ValueKey('login-policy-checkbox')));
+    await tester.tap(find.text('进入工作区'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('我的'));
+    await tester.pumpAndSettle();
+    await tester.drag(
+      find.byKey(const ValueKey('me-page-list')),
+      const Offset(0, -480),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('退出登录'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('进入客服值守'), findsOneWidget);
+  });
+
   testWidgets('值守页展示会话列表与筛选', (WidgetTester tester) async {
     await tester.pumpWidget(const CsImApp(enablePersistence: false));
     await tester.pumpAndSettle();
