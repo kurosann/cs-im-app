@@ -23,6 +23,7 @@ class Conversation {
     this.channelLogoUrl,
     this.assignee = '未认领',
     this.forwardTargets = const <String>[],
+    this.updatedAt,
   });
 
   final String id;
@@ -44,6 +45,8 @@ class Conversation {
   /// 该会话配置的转发去向（转发渠道名称）。
   final List<String> forwardTargets;
 
+  final DateTime? updatedAt;
+
   String get initial => name.isEmpty ? '?' : name.substring(0, 1);
 
   Conversation copyWith({
@@ -64,6 +67,7 @@ class Conversation {
       needsReply: needsReply ?? this.needsReply,
       assignee: assignee,
       forwardTargets: forwardTargets,
+      updatedAt: updatedAt,
     );
   }
 }

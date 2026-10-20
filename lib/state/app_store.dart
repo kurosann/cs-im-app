@@ -3,6 +3,7 @@ import 'package:flutter/material.dart' show ThemeMode;
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../data/chat_repository.dart';
+import '../data/remote/remote_chat_repository.dart';
 import '../models/channel_status.dart';
 import '../models/chat_message.dart';
 import '../models/conversation.dart';
@@ -50,6 +51,7 @@ class AppStore extends ChangeNotifier {
   SharedPreferences? _preferences;
   int _filterIndex = 0;
   bool _loading = true;
+  bool _refreshing = false;
   ThemeMode _themeMode = ThemeMode.system;
   bool _notificationsEnabled = true;
   bool _translationEnabled = false;
@@ -104,31 +106,74 @@ class AppStore extends ChangeNotifier {
     };
   }
 
+  Future<void> connect({required String account, required String token}) async {
+    final ChatRepository repository = _repository;
+    if (repository is RemoteChatRepository) {
+      await repository.connect(account: account, token: token);
+    }
+  }
+
   Future<void> init() async {
     try {
       await _loadSettings();
-      final List<Conversation> conversations = await _repository
-          .fetchConversations();
-      _conversations
-        ..clear()
-        ..addAll(conversations);
-      _messages.clear();
-      for (final Conversation conversation in conversations) {
-        _messages[conversation.id] = List.of(
-          await _repository.fetchMessages(conversation.id),
-        );
-      }
-      _channels
-        ..clear()
-        ..addAll(await _repository.fetchChannels());
-      _forwardChannels
-        ..clear()
-        ..addAll(await _repository.fetchForwardChannels());
-      _profile = await _repository.fetchProfile();
+      await _loadWorkspace();
     } finally {
       _loading = false;
       notifyListeners();
     }
+  }
+
+  Future<void> refresh() async {
+    if (_loading || _refreshing) {
+      return;
+    }
+    _refreshing = true;
+    try {
+      await _loadWorkspace();
+      notifyListeners();
+    } catch (_) {
+      // Keep the last successful snapshot when the server blips.
+    } finally {
+      _refreshing = false;
+    }
+  }
+
+  Future<void> _loadWorkspace() async {
+    final List<Conversation> conversations = await _repository
+        .fetchConversations();
+    final Map<String, List<ChatMessage>> messages =
+        <String, List<ChatMessage>>{};
+    for (final Conversation conversation in conversations) {
+      messages[conversation.id] = List.of(
+        await _repository.fetchMessages(conversation.id),
+      );
+    }
+    final List<ChannelStatus> channels = await _repository.fetchChannels();
+    final List<ForwardChannelStatus> forwardChannels = await _repository
+        .fetchForwardChannels();
+    final OperatorProfile profile = await _repository.fetchProfile();
+    _conversations
+      ..clear()
+      ..addAll(conversations);
+    _messages
+      ..clear()
+      ..addAll(messages);
+    _channels
+      ..clear()
+      ..addAll(channels);
+    _forwardChannels
+      ..clear()
+      ..addAll(forwardChannels);
+    _profile = profile;
+  }
+
+  @override
+  void dispose() {
+    final ChatRepository repository = _repository;
+    if (repository is RemoteChatRepository) {
+      repository.close();
+    }
+    super.dispose();
   }
 
   Future<String> translateText({
@@ -277,7 +322,11 @@ class AppStore extends ChangeNotifier {
     }
     _conversations[index] = _conversations[index].copyWith(unreadCount: 0);
     notifyListeners();
-    await _repository.markRead(conversationId);
+    try {
+      await _repository.markRead(conversationId);
+    } catch (_) {
+      // Local unread is already cleared; the server status can retry later.
+    }
   }
 
   Future<void> sendMessage(String conversationId, String text) async {

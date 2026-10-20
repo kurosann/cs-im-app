@@ -29,11 +29,13 @@ flutter analyze
 flutter test
 ```
 
-接入后端时切换数据源（默认 Mock）：
+接入 cs-im-server 时关闭 Mock。登录账号会作为客服 `sender.id`，密码栏填写访问 Token（开发环境默认 `dev-access-token`）：
 
 ```sh
-flutter run --dart-define=CS_IM_USE_MOCK=false --dart-define=CS_IM_API_BASE=https://api.example.com
+flutter run --dart-define=CS_IM_USE_MOCK=false --dart-define=CS_IM_API_BASE=http://127.0.0.1:19091
 ```
+
+远程模式走 `/admin/v1`：会话、消息、业务 App、转发渠道。文本消息和 http(s) 媒体地址可以发送；服务端没有上传、语音、账号密码和会话未读接口。已读会把客户消息状态改成 `read`。
 
 ## 目录
 
@@ -41,10 +43,11 @@ flutter run --dart-define=CS_IM_USE_MOCK=false --dart-define=CS_IM_API_BASE=http
 lib/
 ├── app.dart              # MaterialApp 与全局 AppStore
 ├── config/               # apiBaseUrl / useMockData
-├── data/                 # ChatRepository + Mock + Remote 占位
+├── data/                 # ChatRepository + Mock + Remote
 ├── models/               # Conversation / ChatMessage
 ├── screens/              # 值守 / 聊天 / 状态 / 我的 / 隐私 / 存储
 ├── state/                # AppStore + AppScope
 ├── theme/                # 原型色板与 ThemeData
 └── widgets/              # 会话列表项与协议卡片
 ```
+

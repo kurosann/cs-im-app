@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import 'config/app_config.dart';
 import 'data/chat_repository_factory.dart';
 import 'data/translation_service.dart';
 import 'data/translation_service_factory.dart';
@@ -34,6 +35,7 @@ class _CsImAppState extends State<CsImApp> {
     persistenceEnabled: widget.enablePersistence,
   );
   bool _authenticated = false;
+  Timer? _refreshTimer;
 
   @override
   void initState() {
@@ -41,22 +43,36 @@ class _CsImAppState extends State<CsImApp> {
     _authenticated = !(widget.requireLogin ?? widget.enablePersistence);
     if (_authenticated) {
       unawaited(_store.init());
+      _startRefresh();
     }
   }
 
   @override
   void dispose() {
+    _refreshTimer?.cancel();
     _store.dispose();
     super.dispose();
+  }
+
+  void _startRefresh() {
+    if (AppConfig.useMockData) {
+      return;
+    }
+    _refreshTimer?.cancel();
+    _refreshTimer = Timer.periodic(const Duration(seconds: 8), (_) {
+      unawaited(_store.refresh());
+    });
   }
 
   Future<void> _login({
     required String account,
     required String password,
   }) async {
-    // The mock repository has no remote handshake yet. Keep this boundary
-    // ready for the account/password auth endpoint.
-    await Future<void>.delayed(const Duration(milliseconds: 280));
+    if (AppConfig.useMockData) {
+      await Future<void>.delayed(const Duration(milliseconds: 280));
+    } else {
+      await _store.connect(account: account, token: password);
+    }
     if (!mounted) {
       return;
     }
@@ -64,9 +80,11 @@ class _CsImAppState extends State<CsImApp> {
     if (_store.loading) {
       unawaited(_store.init());
     }
+    _startRefresh();
   }
 
   void _logout() {
+    _refreshTimer?.cancel();
     if (!mounted) {
       return;
     }

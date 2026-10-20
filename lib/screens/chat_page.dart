@@ -3,6 +3,7 @@ import 'dart:ui' show ImageFilter;
 
 import 'package:flutter/material.dart';
 
+import '../config/app_config.dart';
 import '../models/chat_message.dart';
 import '../models/conversation.dart';
 import '../models/platform_channel.dart';
@@ -193,8 +194,17 @@ class _ChatPageState extends State<ChatPage> {
         _draftCollapsed = false;
       });
     }
+    try {
+      await AppScope.read(context).sendMessage(widget.conversationId, text);
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(error.toString())));
+      return;
+    }
     _controller.clear();
-    await AppScope.read(context).sendMessage(widget.conversationId, text);
     if (!mounted) {
       return;
     }
@@ -225,6 +235,10 @@ class _ChatPageState extends State<ChatPage> {
   }
 
   Future<void> _sendMockAttachment(_AttachmentKind kind) async {
+    if (!AppConfig.useMockData) {
+      await _sendRemoteAttachment(kind);
+      return;
+    }
     final AppStore store = AppScope.read(context);
     final ChatMessageType type;
     final String text;
@@ -256,6 +270,91 @@ class _ChatPageState extends State<ChatPage> {
     }
     ScaffoldMessenger.of(context)
         .showSnackBar(SnackBar(content: Text('已添加示例${kind.label}')));
+    _scrollToEnd();
+  }
+
+  Future<void> _sendRemoteAttachment(_AttachmentKind kind) async {
+    final String? url = await _askMediaUrl(kind);
+    if (url == null || !mounted) {
+      return;
+    }
+    final ChatMessageType type = switch (kind) {
+      _AttachmentKind.image => ChatMessageType.image,
+      _AttachmentKind.video => ChatMessageType.video,
+      _AttachmentKind.file => ChatMessageType.file,
+    };
+    try {
+      await AppScope.read(context).sendAttachment(
+        widget.conversationId,
+        type: type,
+        mediaAsset: url,
+        text: type == ChatMessageType.file ? _fileNameFromUrl(url) : '',
+      );
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(error.toString())));
+      return;
+    }
+    if (!mounted) {
+      return;
+    }
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text('已发送${kind.label}')));
+    _scrollToEnd();
+  }
+
+  Future<String?> _askMediaUrl(_AttachmentKind kind) {
+    final TextEditingController controller = TextEditingController();
+    return showDialog<String>(
+      context: context,
+      builder: (BuildContext dialogContext) {
+        String? errorText;
+        return StatefulBuilder(
+          builder: (BuildContext context, StateSetter setDialogState) {
+            return AlertDialog(
+              backgroundColor: AppColors.surface,
+              title: Text('发送${kind.label}'),
+              content: TextField(
+                controller: controller,
+                autofocus: true,
+                decoration: InputDecoration(
+                  hintText: 'https://',
+                  errorText: errorText,
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(),
+                  child: const Text('取消'),
+                ),
+                TextButton(
+                  onPressed: () {
+                    final String url = controller.text.trim();
+                    final Uri? parsed = Uri.tryParse(url);
+                    if (parsed == null ||
+                        (parsed.scheme != 'http' && parsed.scheme != 'https') ||
+                        parsed.host.isEmpty) {
+                      setDialogState(() {
+                        errorText = '需要 http 或 https 地址';
+                      });
+                      return;
+                    }
+                    Navigator.of(dialogContext).pop(url);
+                  },
+                  child: const Text('发送'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    ).whenComplete(controller.dispose);
+  }
+
+  void _scrollToEnd() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!_scrollController.hasClients) {
         return;
@@ -266,6 +365,12 @@ class _ChatPageState extends State<ChatPage> {
         curve: Curves.easeOut,
       );
     });
+  }
+
+  String _fileNameFromUrl(String url) {
+    final String segment = Uri.parse(url).pathSegments
+        .lastWhere((String item) => item.isNotEmpty, orElse: () => '文件');
+    return Uri.decodeComponent(segment);
   }
 
   void _showCustomerSheet(Conversation conversation) {

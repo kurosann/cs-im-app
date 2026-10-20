@@ -27,6 +27,14 @@ class _LoginPageState extends State<LoginPage> {
   @override
   void initState() {
     super.initState();
+    if (!AppConfig.useMockData) {
+      if (AppConfig.operatorId.isNotEmpty) {
+        _accountController.text = AppConfig.operatorId;
+      }
+      if (AppConfig.accessToken.isNotEmpty) {
+        _passwordController.text = AppConfig.accessToken;
+      }
+    }
   }
 
   @override
@@ -52,6 +60,11 @@ class _LoginPageState extends State<LoginPage> {
         account: _accountController.text.trim(),
         password: _passwordController.text,
       );
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(error.toString())));
+      }
     } finally {
       if (mounted) {
         setState(() => _submitting = false);
@@ -96,7 +109,9 @@ class _LoginPageState extends State<LoginPage> {
                 _GuideStep(
                   number: '01',
                   title: '使用工作台账号登录',
-                  body: '请输入租户管理员分配的账号和密码，确认该账号拥有移动值守权限。',
+                  body: AppConfig.useMockData
+                      ? '请输入租户管理员分配的账号和密码，确认该账号拥有移动值守权限。'
+                      : '账号会作为发送消息的客服 ID。密码栏填写服务端访问 Token。',
                 ),
                 const SizedBox(height: 14),
                 _GuideStep(
@@ -170,7 +185,9 @@ class _LoginPageState extends State<LoginPage> {
                       ),
                       const SizedBox(height: 10),
                       Text(
-                        '使用工作台账号密码登录移动工作区。',
+                        AppConfig.useMockData
+                            ? '使用工作台账号密码登录移动工作区。'
+                            : '账号作为客服身份，密码栏填写访问 Token。',
                         style: TextStyle(
                           fontSize: 14,
                           height: 1.5,
@@ -206,7 +223,12 @@ class _LoginPageState extends State<LoginPage> {
                               },
                             ),
                             const SizedBox(height: 18),
-                            _FieldLabel(label: '密码', hint: '请输入登录密码'),
+                            _FieldLabel(
+                              label: '密码',
+                              hint: AppConfig.useMockData
+                                  ? '请输入登录密码'
+                                  : '请输入访问 Token',
+                            ),
                             const SizedBox(height: 8),
                             TextFormField(
                               key: const ValueKey('login-password'),
