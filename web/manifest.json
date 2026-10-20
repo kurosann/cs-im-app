@@ -5,7 +5,7 @@
     "display": "standalone",
     "background_color": "#0175C2",
     "theme_color": "#0175C2",
-    "description": "聚合客服系统 CS-IM V1 移动端（Flutter）",
+    "description": "聚合客服系统 CS-IM 移动端（Flutter）",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

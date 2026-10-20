@@ -73,7 +73,7 @@ class StorageAgreementPage extends StatelessWidget {
                           borderRadius: BorderRadius.circular(12),
                         ),
                         child: Text(
-                          '提示：本协议为 V1 原型草案，正式上线前需经法务审核。',
+                          '提示：本协议为原型草案，正式上线前需经法务审核。',
                           style: TextStyle(
                             fontSize: 11,
                             height: 1.5,

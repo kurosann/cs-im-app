@@ -6,7 +6,7 @@ abstract final class AppConfig {
     defaultValue: '',
   );
 
-  /// V1 纯前端阶段保持 true；接入后端时传 --dart-define=CS_IM_USE_MOCK=false。
+  /// 纯前端阶段保持 true；接入后端时传 --dart-define=CS_IM_USE_MOCK=false。
   static const bool useMockData = bool.fromEnvironment(
     'CS_IM_USE_MOCK',
     defaultValue: true,

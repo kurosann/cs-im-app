@@ -70,7 +70,7 @@ void main() {
 
     await tester.tap(find.text('图片'));
     await tester.pumpAndSettle();
-    expect(find.text('已添加示例图片（V1 Mock）'), findsOneWidget);
+    expect(find.text('已添加示例图片'), findsOneWidget);
 
     await tester.pump(const Duration(seconds: 5));
     await tester.pumpAndSettle();

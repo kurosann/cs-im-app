@@ -7,7 +7,7 @@ import '../chat_repository.dart';
 
 /// 后端对接占位实现。
 ///
-/// V1 纯前端阶段不启用；接入 cs-im-route 时按下方注释逐项实现，
+/// 纯前端阶段不启用；接入 cs-im-route 时按下方注释逐项实现，
 /// UI / AppStore 不需要改动。
 class RemoteChatRepository implements ChatRepository {
   RemoteChatRepository({required this.baseUrl});

@@ -255,7 +255,7 @@ class _ChatPageState extends State<ChatPage> {
       return;
     }
     ScaffoldMessenger.of(context)
-        .showSnackBar(SnackBar(content: Text('已添加示例${kind.label}（V1 Mock）')));
+        .showSnackBar(SnackBar(content: Text('已添加示例${kind.label}')));
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!_scrollController.hasClients) {
         return;

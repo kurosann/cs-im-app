@@ -100,7 +100,7 @@ void main() {
 
     expect(find.text('隐私协议'), findsOneWidget);
     expect(find.text('隐私速览'), findsOneWidget);
-    expect(find.text('提示：本协议为 V1 原型草案，正式上线前需经法务审核。'), findsOneWidget);
+    expect(find.text('提示：本协议为原型草案，正式上线前需经法务审核。'), findsOneWidget);
   });
 
   testWidgets('切换浅色/深色主题', (WidgetTester tester) async {

@@ -6,7 +6,7 @@ import '../models/operator_profile.dart';
 
 /// 数据访问边界。
 ///
-/// UI 与状态层只依赖本接口：V1 使用 [MockChatRepository]，
+/// UI 与状态层只依赖本接口：当前使用 [MockChatRepository]，
 /// 接入 cs-im-route 后端后替换为 RemoteChatRepository 即可。
 abstract interface class ChatRepository {
   Future<List<Conversation>> fetchConversations();

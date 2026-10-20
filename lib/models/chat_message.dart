@@ -23,7 +23,7 @@ class ChatMessage {
   final String time;
   final ChatMessageType type;
 
-  /// 媒体资源（V1 为本地 asset；接入后端后替换为媒体 URL）。
+  /// 媒体资源（当前为本地 asset；接入后端后替换为媒体 URL）。
   final String? mediaAsset;
 
   /// 语音 / 视频时长（秒）。

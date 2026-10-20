@@ -113,7 +113,7 @@ class _MePageState extends State<MePage> {
                 widget.onLogout ??
                 () {
                   ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('V1 原型：登录与退出将在接入后端后提供')),
+                    const SnackBar(content: Text('登录与退出将在接入后端后提供')),
                   );
                 },
             style: FilledButton.styleFrom(
