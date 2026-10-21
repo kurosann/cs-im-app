@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
 import 'dart:typed_data';
@@ -21,7 +22,8 @@ class MachineTranslationService implements TranslationService {
 
   final http.Client _client;
 
-  static const Duration _requestTimeout = Duration(seconds: 8);
+  static const Duration _requestTimeout = Duration(seconds: 3);
+  static const Duration _probeTimeout = Duration(seconds: 3);
 
   /// 自动模式优先使用跨域友好的源，避免网页端长时间等待。
   static const List<TranslationProvider> _autoChain = [
@@ -53,6 +55,54 @@ class MachineTranslationService implements TranslationService {
   String _cnkiToken = '';
 
   @override
+  Future<Duration?> measureProviderLatency(TranslationProvider provider) async {
+    final List<Uri> endpoints = switch (provider) {
+      TranslationProvider.google => [
+        Uri.https('translate.googleapis.com', '/'),
+      ],
+      TranslationProvider.tencent => [
+        Uri.https('wxapp.translator.qq.com', '/'),
+      ],
+      TranslationProvider.baidu => [Uri.https('fanyi.baidu.com', '/')],
+      TranslationProvider.youdao => [Uri.https('dict.youdao.com', '/')],
+      TranslationProvider.deepl => [Uri.https('www2.deepl.com', '/')],
+      TranslationProvider.volcengine => [
+        Uri.https('translate.volcengine.com', '/'),
+      ],
+      TranslationProvider.caiyun => [Uri.https('interpreter.cyapi.cn', '/')],
+      TranslationProvider.transmart => [Uri.https('yi.qq.com', '/')],
+      TranslationProvider.papago => [Uri.https('api.papago-chrome.com', '/')],
+      TranslationProvider.cnki => [Uri.https('dict.cnki.net', '/')],
+      TranslationProvider.mymemory => [
+        Uri.https('api.mymemory.translated.net', '/'),
+      ],
+      TranslationProvider.libretranslate => [
+        Uri.https('translate.fedilab.app', '/'),
+        Uri.https('translate.disroot.org', '/'),
+      ],
+      TranslationProvider.chatgptFree => [
+        Uri.http('www.saviorthedistant.com', '/'),
+      ],
+      TranslationProvider.auto => const <Uri>[],
+    };
+
+    for (final Uri endpoint in endpoints) {
+      final Stopwatch stopwatch = Stopwatch()..start();
+      try {
+        final http.StreamedResponse response = await _client
+            .send(http.Request('HEAD', endpoint))
+            .timeout(_probeTimeout);
+        stopwatch.stop();
+        await response.stream.drain<void>();
+        return stopwatch.elapsed;
+      } catch (_) {
+        stopwatch.stop();
+      }
+    }
+    return null;
+  }
+
+  @override
   Future<String> translate({
     required String text,
     required TranslationLanguage source,
@@ -71,7 +121,12 @@ class MachineTranslationService implements TranslationService {
         ? _autoChain
         : <TranslationProvider>[provider];
     Object? lastError;
+    final Stopwatch totalTime = Stopwatch()..start();
     for (final TranslationProvider item in chain) {
+      if (totalTime.elapsed >= _requestTimeout) {
+        lastError = TimeoutException('translation exceeded $_requestTimeout');
+        break;
+      }
       try {
         final String translated = switch (item) {
           TranslationProvider.google => await _google(
@@ -154,6 +209,9 @@ class MachineTranslationService implements TranslationService {
         }
       } catch (error) {
         lastError = error;
+        if (error is TimeoutException || totalTime.elapsed >= _requestTimeout) {
+          break;
+        }
       }
     }
     if (lastError != null) {

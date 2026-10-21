@@ -4,6 +4,7 @@ import '../models/conversation.dart';
 import '../models/forward_channel_status.dart';
 import '../models/platform_channel.dart';
 import '../models/operator_profile.dart';
+import '../models/translation_language.dart';
 import 'chat_repository.dart';
 import 'mock_data.dart';
 
@@ -135,4 +136,13 @@ class MockChatRepository implements ChatRepository {
       _conversations[index] = _conversations[index].copyWith(unreadCount: 0);
     }
   }
+
+  @override
+  Future<String> translate({
+    required String text,
+    required TranslationLanguage source,
+    required TranslationLanguage target,
+  }) => Future<String>.error(
+    UnsupportedError('Mock repository has no server translation'),
+  );
 }

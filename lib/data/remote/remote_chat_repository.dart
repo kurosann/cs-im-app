@@ -6,6 +6,7 @@ import '../../models/conversation.dart';
 import '../../models/forward_channel_status.dart';
 import '../../models/operator_profile.dart';
 import '../../models/platform_channel.dart';
+import '../../models/translation_language.dart';
 import '../chat_repository.dart';
 import 'im_api_client.dart';
 
@@ -278,6 +279,29 @@ class RemoteChatRepository implements ChatRepository {
       );
       item.status = updated['status']?.toString() ?? 'read';
     }
+  }
+
+  @override
+  Future<String> translate({
+    required String text,
+    required TranslationLanguage source,
+    required TranslationLanguage target,
+  }) async {
+    final Map<String, dynamic> response = asJsonMap(
+      await _client.post(
+        '/admin/v1/translate',
+        body: <String, dynamic>{
+          'text': text,
+          'sourceLang': source.code,
+          'targetLang': target.code,
+        },
+      ),
+    );
+    final String translated = response['text']?.toString().trim() ?? '';
+    if (translated.isEmpty) {
+      throw ImApiException('服务器返回了空译文');
+    }
+    return translated;
   }
 
   void close() {

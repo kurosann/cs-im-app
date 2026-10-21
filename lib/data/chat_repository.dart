@@ -3,6 +3,7 @@ import '../models/chat_message.dart';
 import '../models/conversation.dart';
 import '../models/forward_channel_status.dart';
 import '../models/operator_profile.dart';
+import '../models/translation_language.dart';
 
 /// 数据访问边界。
 ///
@@ -33,4 +34,10 @@ abstract interface class ChatRepository {
   });
 
   Future<void> markRead(String conversationId);
+
+  Future<String> translate({
+    required String text,
+    required TranslationLanguage source,
+    required TranslationLanguage target,
+  });
 }

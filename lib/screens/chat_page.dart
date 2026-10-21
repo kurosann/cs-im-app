@@ -46,6 +46,7 @@ class _ChatPageState extends State<ChatPage> {
   void initState() {
     super.initState();
     _controller.addListener(_onDraftChanged);
+    unawaited(AppScope.read(context).checkTranslationProviderLatenciesIfDue());
   }
 
   @override
@@ -67,31 +68,40 @@ class _ChatPageState extends State<ChatPage> {
       builder: (BuildContext sheetContext) {
         return StatefulBuilder(
           builder: (BuildContext context, StateSetter setSheetState) {
-            return _TranslationSettingsSheet(
-              enabled: store.translationEnabled,
-              provider: store.translationProvider,
-              source: store.translationSource,
-              target: store.translationTarget,
-              onToggle: (bool value) {
-                store.setTranslationEnabled(value);
-                setSheetState(() {});
-                _onDraftChanged();
-              },
-              onSelectProvider: (TranslationProvider value) {
-                store.setTranslationProvider(value);
-                setSheetState(() {});
-                _onDraftChanged();
-              },
-              onSelectSource: (TranslationLanguage value) {
-                store.setTranslationSource(value);
-                setSheetState(() {});
-                _onDraftChanged();
-              },
-              onSelectTarget: (TranslationLanguage value) {
-                store.setTranslationTarget(value);
-                setSheetState(() {});
-                _onDraftChanged();
-              },
+            return AnimatedBuilder(
+              animation: store,
+              builder: (BuildContext context, Widget? child) =>
+                  _TranslationSettingsSheet(
+                    enabled: store.translationEnabled,
+                    provider: store.translationProvider,
+                    source: store.translationSource,
+                    target: store.translationTarget,
+                    providerLatencies: store.translationProviderLatencies,
+                    testedProviders: store.testedTranslationProviders,
+                    testingProviders: store.testingTranslationProviders,
+                    checkingTranslationProviderLatencies:
+                        store.checkingTranslationProviderLatencies,
+                    onToggle: (bool value) {
+                      store.setTranslationEnabled(value);
+                      setSheetState(() {});
+                      _onDraftChanged();
+                    },
+                    onSelectProvider: (TranslationProvider value) {
+                      store.setTranslationProvider(value);
+                      setSheetState(() {});
+                      _onDraftChanged();
+                    },
+                    onSelectSource: (TranslationLanguage value) {
+                      store.setTranslationSource(value);
+                      setSheetState(() {});
+                      _onDraftChanged();
+                    },
+                    onSelectTarget: (TranslationLanguage value) {
+                      store.setTranslationTarget(value);
+                      setSheetState(() {});
+                      _onDraftChanged();
+                    },
+                  ),
             );
           },
         );
@@ -772,6 +782,10 @@ class _TranslationSettingsSheet extends StatelessWidget {
     required this.target,
     required this.onToggle,
     required this.onSelectProvider,
+    required this.providerLatencies,
+    required this.testedProviders,
+    required this.testingProviders,
+    required this.checkingTranslationProviderLatencies,
     required this.onSelectSource,
     required this.onSelectTarget,
   });
@@ -782,6 +796,10 @@ class _TranslationSettingsSheet extends StatelessWidget {
   final TranslationLanguage target;
   final ValueChanged<bool> onToggle;
   final ValueChanged<TranslationProvider> onSelectProvider;
+  final Map<TranslationProvider, Duration?> providerLatencies;
+  final Set<TranslationProvider> testedProviders;
+  final Set<TranslationProvider> testingProviders;
+  final bool checkingTranslationProviderLatencies;
   final ValueChanged<TranslationLanguage> onSelectSource;
   final ValueChanged<TranslationLanguage> onSelectTarget;
 
@@ -849,7 +867,26 @@ class _TranslationSettingsSheet extends StatelessWidget {
                 ],
               ),
               const SizedBox(height: 14),
-              const _FieldLabel('翻译源'),
+              Row(
+                children: [
+                  const Expanded(child: _FieldLabel('翻译源')),
+                  Icon(
+                    Icons.network_check_rounded,
+                    size: 14,
+                    color: AppColors.inkSoft,
+                  ),
+                  const SizedBox(width: 4),
+                  Expanded(
+                    child: Text(
+                      checkingTranslationProviderLatencies
+                          ? '网络延迟 · 后台测速中'
+                          : '进入消息页时检查 · 30 分钟内不重复',
+                      textAlign: TextAlign.right,
+                      style: TextStyle(fontSize: 12, color: AppColors.inkSoft),
+                    ),
+                  ),
+                ],
+              ),
               const SizedBox(height: 6),
               _ExpandableSelect<TranslationProvider>(
                 key: const ValueKey('translation-provider-dropdown'),
@@ -857,6 +894,12 @@ class _TranslationSettingsSheet extends StatelessWidget {
                 items: TranslationProvider.values,
                 labelOf: (TranslationProvider item) => item.label,
                 onChanged: onSelectProvider,
+                trailingBuilder: (TranslationProvider item) => _ProviderLatency(
+                  latency: providerLatencies[item],
+                  tested: testedProviders.contains(item),
+                  testing: testingProviders.contains(item),
+                  automatic: item == TranslationProvider.auto,
+                ),
               ),
               const SizedBox(height: 12),
               const _FieldLabel('源语言'),
@@ -920,12 +963,14 @@ class _ExpandableSelect<T> extends StatefulWidget {
     required this.items,
     required this.labelOf,
     required this.onChanged,
+    this.trailingBuilder,
   });
 
   final T value;
   final List<T> items;
   final String Function(T) labelOf;
   final ValueChanged<T> onChanged;
+  final Widget Function(T)? trailingBuilder;
 
   @override
   State<_ExpandableSelect<T>> createState() => _ExpandableSelectState<T>();
@@ -940,7 +985,10 @@ class _ExpandableSelectState<T> extends State<_ExpandableSelect<T>> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         InkWell(
-          onTap: () => setState(() => _expanded = !_expanded),
+          onTap: () {
+            final bool expanded = !_expanded;
+            setState(() => _expanded = expanded);
+          },
           borderRadius: BorderRadius.circular(12),
           child: Container(
             height: 46,
@@ -986,52 +1034,181 @@ class _ExpandableSelectState<T> extends State<_ExpandableSelect<T>> {
               borderRadius: BorderRadius.circular(12),
               border: Border.all(color: AppColors.cardBorder),
             ),
-            child: ListView.builder(
-              shrinkWrap: true,
-              padding: const EdgeInsets.symmetric(vertical: 4),
-              itemCount: widget.items.length,
-              itemBuilder: (BuildContext context, int index) {
-                final T item = widget.items[index];
-                final bool selected = item == widget.value;
-                return InkWell(
-                  onTap: () {
-                    widget.onChanged(item);
-                    setState(() => _expanded = false);
-                  },
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 10,
-                    ),
-                    color: selected ? AppColors.lavender : Colors.transparent,
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            widget.labelOf(item),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              fontSize: 14,
-                              fontWeight: FontWeight.w500,
-                              color: AppColors.ink,
+            child: widget.trailingBuilder == null
+                ? _buildOptions()
+                : Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(12, 4, 12, 0),
+                        child: Row(
+                          children: [
+                            Icon(
+                              Icons.network_check_rounded,
+                              size: 14,
+                              color: AppColors.inkSoft,
                             ),
-                          ),
+                            const SizedBox(width: 6),
+                            Text(
+                              '点按右侧测速，可单独重测',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: AppColors.inkSoft,
+                              ),
+                            ),
+                          ],
                         ),
-                        if (selected)
-                          Icon(
-                            Icons.check_rounded,
-                            size: 18,
-                            color: AppColors.ink,
-                          ),
-                      ],
-                    ),
+                      ),
+                      SizedBox(height: 212, child: _buildOptions()),
+                    ],
                   ),
-                );
-              },
-            ),
           ),
       ],
+    );
+  }
+
+  Widget _buildOptions() => ListView.builder(
+    shrinkWrap: true,
+    padding: const EdgeInsets.symmetric(vertical: 4),
+    itemCount: widget.items.length,
+    itemBuilder: (BuildContext context, int index) {
+      final T item = widget.items[index];
+      final bool selected = item == widget.value;
+      return InkWell(
+        onTap: () {
+          widget.onChanged(item);
+          setState(() => _expanded = false);
+        },
+        child: Container(
+          constraints: const BoxConstraints(minHeight: 44),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          color: selected ? AppColors.lavender : Colors.transparent,
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  widget.labelOf(item),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w500,
+                    color: AppColors.ink,
+                  ),
+                ),
+              ),
+              if (widget.trailingBuilder != null) widget.trailingBuilder!(item),
+              if (selected)
+                Icon(Icons.check_rounded, size: 18, color: AppColors.ink),
+            ],
+          ),
+        ),
+      );
+    },
+  );
+}
+
+class _ProviderLatency extends StatelessWidget {
+  const _ProviderLatency({
+    required this.latency,
+    required this.tested,
+    required this.testing,
+    required this.automatic,
+  });
+
+  final Duration? latency;
+  final bool tested;
+  final bool testing;
+  final bool automatic;
+
+  @override
+  Widget build(BuildContext context) {
+    final String label = automatic
+        ? '自动'
+        : testing
+        ? '测速中'
+        : !tested
+        ? '等待测速'
+        : latency == null
+        ? '无响应'
+        : latency!.inMilliseconds == 0
+        ? '<1 ms'
+        : '${latency!.inMilliseconds} ms';
+    final Color color = !tested || testing
+        ? AppColors.inkSoft
+        : latency == null
+        ? AppColors.red600
+        : latency!.inMilliseconds < 200
+        ? AppColors.emerald600
+        : AppColors.inkSoft;
+
+    if (automatic) {
+      return SizedBox(
+        width: 66,
+        child: Text(
+          label,
+          textAlign: TextAlign.right,
+          style: TextStyle(fontSize: 11, color: color),
+        ),
+      );
+    }
+
+    return SizedBox(
+      width: 76,
+      height: 44,
+      child: Semantics(
+        button: true,
+        label: testing
+            ? '正在测速'
+            : tested && latency != null
+            ? '网络延迟 ${latency!.inMilliseconds} 毫秒，点按重新测速'
+            : tested
+            ? '无响应，点按重新测速'
+            : '测试网络延迟',
+        child: InkWell(
+          onTap: null,
+          borderRadius: BorderRadius.circular(8),
+          child: Center(
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (testing)
+                  SizedBox(
+                    width: 10,
+                    height: 10,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 1.5,
+                      color: AppColors.inkSoft,
+                    ),
+                  )
+                else
+                  Icon(
+                    tested && latency == null
+                        ? Icons.wifi_off_rounded
+                        : tested
+                        ? Icons.refresh_rounded
+                        : Icons.network_check_rounded,
+                    size: 13,
+                    color: color,
+                  ),
+                const SizedBox(width: 4),
+                Flexible(
+                  child: Text(
+                    label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: color,
+                      fontFeatures: const [FontFeature.tabularFigures()],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

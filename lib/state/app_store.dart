@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart' show ThemeMode;
 import 'package:shared_preferences/shared_preferences.dart';
@@ -47,6 +49,14 @@ class AppStore extends ChangeNotifier {
   static const String _translationProviderKey = 'settings.translation_provider';
   static const String _translationSourceKey = 'settings.translation_source';
   static const String _translationTargetKey = 'settings.translation_target';
+  static const String _translationLatencyCheckAtKey =
+      'settings.translation_latency_check_at';
+  static const String _translationLatencyResultsKey =
+      'settings.translation_latency_results';
+  static const Duration _translationLatencyCheckInterval = Duration(
+    minutes: 30,
+  );
+  static const int _translationLatencyConcurrency = 3;
 
   SharedPreferences? _preferences;
   int _filterIndex = 0;
@@ -58,6 +68,12 @@ class AppStore extends ChangeNotifier {
   TranslationProvider _translationProvider = TranslationProvider.auto;
   TranslationLanguage _translationSource = TranslationLanguage.auto;
   TranslationLanguage _translationTarget = TranslationLanguage.auto;
+  DateTime? _lastTranslationLatencyCheckAt;
+  final Map<TranslationProvider, Duration?> _translationProviderLatencies = {};
+  final Set<TranslationProvider> _testedTranslationProviders = {};
+  final Set<TranslationProvider> _testingTranslationProviders = {};
+  bool _checkingTranslationProviderLatencies = false;
+  bool _disposed = false;
 
   bool get loading => _loading;
   int get filterIndex => _filterIndex;
@@ -67,6 +83,14 @@ class AppStore extends ChangeNotifier {
   TranslationProvider get translationProvider => _translationProvider;
   TranslationLanguage get translationSource => _translationSource;
   TranslationLanguage get translationTarget => _translationTarget;
+  Map<TranslationProvider, Duration?> get translationProviderLatencies =>
+      Map.unmodifiable(_translationProviderLatencies);
+  Set<TranslationProvider> get testedTranslationProviders =>
+      Set.unmodifiable(_testedTranslationProviders);
+  Set<TranslationProvider> get testingTranslationProviders =>
+      Set.unmodifiable(_testingTranslationProviders);
+  bool get checkingTranslationProviderLatencies =>
+      _checkingTranslationProviderLatencies;
 
   List<Conversation> get conversations => List.unmodifiable(_conversations);
   List<ChannelStatus> get channels => List.unmodifiable(_channels);
@@ -169,6 +193,7 @@ class AppStore extends ChangeNotifier {
 
   @override
   void dispose() {
+    _disposed = true;
     final ChatRepository repository = _repository;
     if (repository is RemoteChatRepository) {
       repository.close();
@@ -181,19 +206,214 @@ class AppStore extends ChangeNotifier {
     required TranslationLanguage source,
     required TranslationLanguage target,
     TranslationProvider provider = TranslationProvider.auto,
-  }) => _translationService.translate(
+  }) => _translateWithFallback(
     text: text,
     source: source,
     target: target,
     provider: provider,
   );
 
+  static const Duration _localTranslationTimeout = Duration(seconds: 3);
+  static const Duration _backendTranslationTimeout = Duration(seconds: 10);
+
+  Future<String> _translateWithFallback({
+    required String text,
+    required TranslationLanguage source,
+    required TranslationLanguage target,
+    required TranslationProvider provider,
+  }) async {
+    final bool backendFirst = _shouldUseBackendFirst(provider);
+    final TranslationProvider localProvider = _localProviderFor(provider);
+    if (backendFirst) {
+      try {
+        return await _repository
+            .translate(text: text, source: source, target: target)
+            .timeout(_backendTranslationTimeout);
+      } catch (_) {
+        return _translationService
+            .translate(
+              text: text,
+              source: source,
+              target: target,
+              provider: localProvider,
+            )
+            .timeout(_localTranslationTimeout);
+      }
+    }
+
+    try {
+      return await _translationService
+          .translate(
+            text: text,
+            source: source,
+            target: target,
+            provider: localProvider,
+          )
+          .timeout(_localTranslationTimeout);
+    } catch (_) {
+      return _repository
+          .translate(text: text, source: source, target: target)
+          .timeout(_backendTranslationTimeout);
+    }
+  }
+
+  bool _shouldUseBackendFirst(TranslationProvider provider) {
+    if (provider == TranslationProvider.auto) {
+      if (_testedTranslationProviders.isEmpty) {
+        return false;
+      }
+      return !_testedTranslationProviders.any((TranslationProvider tested) {
+        final Duration? latency = _translationProviderLatencies[tested];
+        return latency != null && latency <= _localTranslationTimeout;
+      });
+    }
+    if (!_testedTranslationProviders.contains(provider)) {
+      return false;
+    }
+    final Duration? latency = _translationProviderLatencies[provider];
+    return latency == null || latency > _localTranslationTimeout;
+  }
+
+  TranslationProvider _localProviderFor(TranslationProvider provider) {
+    if (provider != TranslationProvider.auto) {
+      return provider;
+    }
+    TranslationProvider? fastestProvider;
+    Duration? fastestLatency;
+    for (final TranslationProvider tested in _testedTranslationProviders) {
+      final Duration? latency = _translationProviderLatencies[tested];
+      if (latency == null || latency > _localTranslationTimeout) {
+        continue;
+      }
+      if (fastestLatency == null || latency < fastestLatency) {
+        fastestProvider = tested;
+        fastestLatency = latency;
+      }
+    }
+    return fastestProvider ?? TranslationProvider.auto;
+  }
+
+  Future<void> _measureTranslationProviderLatency(
+    TranslationProvider provider,
+  ) async {
+    Duration? latency;
+    try {
+      latency = await _translationService.measureProviderLatency(provider);
+    } catch (_) {
+      latency = null;
+    }
+    _translationProviderLatencies[provider] = latency;
+    _testedTranslationProviders.add(provider);
+    _testingTranslationProviders.remove(provider);
+  }
+
+  Future<void> checkTranslationProviderLatenciesIfDue() async {
+    if (_checkingTranslationProviderLatencies || _disposed) {
+      return;
+    }
+
+    final DateTime now = DateTime.now();
+    final DateTime? lastCheck = _lastTranslationLatencyCheckAt;
+    if (lastCheck != null &&
+        now.difference(lastCheck) < _translationLatencyCheckInterval) {
+      if (_testedTranslationProviders.isEmpty &&
+          !_checkingTranslationProviderLatencies) {
+        _checkingTranslationProviderLatencies = true;
+        _testingTranslationProviders
+          ..clear()
+          ..addAll(
+            TranslationProvider.values.where(
+              (TranslationProvider provider) =>
+                  provider != TranslationProvider.auto,
+            ),
+          );
+        notifyListeners();
+        await _runTranslationProviderLatencyChecks();
+      }
+      return;
+    }
+
+    _lastTranslationLatencyCheckAt = now;
+    _checkingTranslationProviderLatencies = true;
+    _testingTranslationProviders
+      ..clear()
+      ..addAll(
+        TranslationProvider.values.where(
+          (TranslationProvider provider) =>
+              provider != TranslationProvider.auto,
+        ),
+      );
+    notifyListeners();
+
+    final SharedPreferences? preferences = _preferences;
+    if (persistenceEnabled && preferences != null) {
+      try {
+        await preferences.setInt(
+          _translationLatencyCheckAtKey,
+          now.millisecondsSinceEpoch,
+        );
+      } catch (_) {
+        // A storage failure should not stop this network check.
+      }
+    }
+
+    await _runTranslationProviderLatencyChecks();
+  }
+
+  Future<void> _runTranslationProviderLatencyChecks() async {
+    final List<TranslationProvider> providers = TranslationProvider.values
+        .where(
+          (TranslationProvider provider) =>
+              provider != TranslationProvider.auto,
+        )
+        .toList();
+    int nextProviderIndex = 0;
+
+    Future<void> runNextProbe() async {
+      while (nextProviderIndex < providers.length) {
+        final TranslationProvider provider = providers[nextProviderIndex++];
+        await _measureTranslationProviderLatency(provider);
+      }
+    }
+
+    await Future.wait<void>(
+      List<Future<void>>.generate(
+        _translationLatencyConcurrency,
+        (_) => runNextProbe(),
+      ),
+    );
+    _checkingTranslationProviderLatencies = false;
+    if (!_disposed) {
+      notifyListeners();
+    }
+    await _persistTranslationProviderLatencies();
+  }
+
+  Future<void> _persistTranslationProviderLatencies() async {
+    if (!persistenceEnabled || _preferences == null) {
+      return;
+    }
+    final Map<String, int> values = <String, int>{
+      for (final TranslationProvider provider in _testedTranslationProviders)
+        provider.name:
+            _translationProviderLatencies[provider]?.inMicroseconds ?? -1,
+    };
+    try {
+      await _preferences!.setString(
+        _translationLatencyResultsKey,
+        jsonEncode(values),
+      );
+    } catch (_) {
+      // Latencies are temporary UI data; storage failure is non-fatal.
+    }
+  }
+
   Future<String> translateDraft({
     required String text,
     required TranslationLanguage source,
     required TranslationLanguage target,
     required TranslationProvider provider,
-  }) => _translationService.translate(
+  }) => _translateWithFallback(
     text: text,
     source: source,
     target: target,
@@ -389,8 +609,50 @@ class AppStore extends ChangeNotifier {
         preferences.getString(_translationTargetKey),
         _translationTarget,
       );
+      final int? translationLatencyCheckAt = preferences.getInt(
+        _translationLatencyCheckAtKey,
+      );
+      if (translationLatencyCheckAt != null) {
+        _lastTranslationLatencyCheckAt = DateTime.fromMillisecondsSinceEpoch(
+          translationLatencyCheckAt,
+        );
+      }
+      final String? translationLatencyResults = preferences.getString(
+        _translationLatencyResultsKey,
+      );
+      if (translationLatencyResults != null) {
+        _restoreTranslationProviderLatencies(translationLatencyResults);
+      }
     } catch (_) {
       // 测试环境或平台存储不可用时保持默认值，不影响页面启动。
+    }
+  }
+
+  void _restoreTranslationProviderLatencies(String encoded) {
+    try {
+      final Object? decoded = jsonDecode(encoded);
+      if (decoded is! Map) {
+        return;
+      }
+      for (final MapEntry<Object?, Object?> entry in decoded.entries) {
+        TranslationProvider? provider;
+        for (final TranslationProvider candidate
+            in TranslationProvider.values) {
+          if (candidate.name == entry.key) {
+            provider = candidate;
+            break;
+          }
+        }
+        if (provider != null && entry.value is int) {
+          final int microseconds = entry.value as int;
+          _translationProviderLatencies[provider] = microseconds < 0
+              ? null
+              : Duration(microseconds: microseconds);
+          _testedTranslationProviders.add(provider);
+        }
+      }
+    } catch (_) {
+      // Ignore stale or malformed latency cache entries.
     }
   }
 

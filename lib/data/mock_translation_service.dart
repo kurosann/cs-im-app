@@ -7,6 +7,11 @@ class MockTranslationService implements TranslationService {
   const MockTranslationService();
 
   @override
+  Future<Duration?> measureProviderLatency(
+    TranslationProvider provider,
+  ) async => null;
+
+  @override
   Future<String> translate({
     required String text,
     required TranslationLanguage source,

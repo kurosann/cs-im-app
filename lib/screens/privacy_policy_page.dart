@@ -141,7 +141,7 @@ class PrivacyPolicyPage extends StatelessWidget {
                         title: '6. 第三方服务与共享边界',
                         body: '我们不会将你的信息出售、出租，也不会用于广告营销或用户画像。仅在实现具体功能时，向所选服务商发送必要数据：',
                         bullets: [
-                          '机器翻译：将待翻译文本发送给所选翻译服务商（Google、腾讯翻译君、有道、百度、DeepL、火山翻译、彩云小译、腾讯交互翻译、Papago、CNKI、MyMemory、LibreTranslate、ChatGPT 免费等）；',
+                          '机器翻译：将待翻译文本发送给所选翻译服务商（Google、腾讯翻译君、有道、百度、DeepL、火山翻译、彩云小译、腾讯交互翻译、Papago、CNKI、MyMemory、LibreTranslate、ChatGPT 免费等）；本地来源失败或预计超过 3 秒时，文本会发送到 CS-IM 服务器并由 Google 翻译处理；',
                           'AI 服务：将组装后的会话上下文发送给配置的 AI 模型服务；',
                           '转发渠道：将消息内容发送到 Telegram、WhatsApp、飞书、企业微信、Webhook 等目标；',
                           '除用户授权、功能必需或法律要求外，不向其他第三方共享信息；',
