@@ -62,6 +62,7 @@ class _CsImAppState extends State<CsImApp> {
     _refreshTimer = Timer.periodic(const Duration(seconds: 8), (_) {
       unawaited(_store.refresh());
     });
+    unawaited(_store.startRealtime());
   }
 
   Future<void> _login({

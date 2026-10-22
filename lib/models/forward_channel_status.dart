@@ -12,6 +12,7 @@ extension ForwardChannelStateX on ForwardChannelState {
 
 class ForwardChannelStatus {
   const ForwardChannelStatus({
+    this.id = '',
     required this.platform,
     required this.displayName,
     required this.channelLabel,
@@ -19,6 +20,7 @@ class ForwardChannelStatus {
     required this.state,
   });
 
+  final String id;
   final PlatformChannel platform;
 
   /// 转发目标显示名，例如 售后值班群 / 海外客服 / 财务提醒。

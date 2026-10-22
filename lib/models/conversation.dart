@@ -24,6 +24,7 @@ class Conversation {
     this.assignee = '未认领',
     this.forwardTargets = const <String>[],
     this.updatedAt,
+    this.closed = false,
   });
 
   final String id;
@@ -47,13 +48,20 @@ class Conversation {
 
   final DateTime? updatedAt;
 
+  /// 服务端状态为 closed 时为 true，值守列表不再展示。
+  final bool closed;
+
   String get initial => name.isEmpty ? '?' : name.substring(0, 1);
 
   Conversation copyWith({
     String? lastMessage,
     String? time,
+    ConversationStatus? status,
     int? unreadCount,
     bool? needsReply,
+    String? assignee,
+    List<String>? forwardTargets,
+    bool? closed,
   }) {
     return Conversation(
       id: id,
@@ -62,12 +70,13 @@ class Conversation {
       channelLogoUrl: channelLogoUrl,
       lastMessage: lastMessage ?? this.lastMessage,
       time: time ?? this.time,
-      status: status,
+      status: status ?? this.status,
       unreadCount: unreadCount ?? this.unreadCount,
       needsReply: needsReply ?? this.needsReply,
-      assignee: assignee,
-      forwardTargets: forwardTargets,
+      assignee: assignee ?? this.assignee,
+      forwardTargets: forwardTargets ?? this.forwardTargets,
       updatedAt: updatedAt,
+      closed: closed ?? this.closed,
     );
   }
 }

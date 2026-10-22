@@ -110,11 +110,64 @@ class ImApiClient {
     return payload ?? body;
   }
 
+  Stream<Map<String, dynamic>> events(String path) async* {
+    if (token.trim().isEmpty) {
+      throw ImApiException('\u7f3a\u5c11\u8bbf\u95ee Token');
+    }
+    final Uri uri = Uri.parse('$baseUrl$path');
+    final http.Request request = http.Request('GET', uri);
+    request.headers['Authorization'] = 'Bearer ${token.trim()}';
+    request.headers['Accept'] = 'text/event-stream';
+    final http.StreamedResponse streamed = await _client.send(request);
+    if (streamed.statusCode >= 400) {
+      final String raw = await streamed.stream.bytesToString();
+      _decode(streamed.statusCode, raw);
+      return;
+    }
+    final StringBuffer pending = StringBuffer();
+    await for (final String chunk in streamed.stream.transform(utf8.decoder)) {
+      for (final Map<String, dynamic> event in takeSseEvents(pending, chunk)) {
+        yield event;
+      }
+    }
+  }
+
   void close() {
     if (_ownsClient) {
       _client.close();
     }
   }
+}
+
+List<Map<String, dynamic>> takeSseEvents(StringBuffer pending, String chunk) {
+  pending.write(chunk);
+  final List<Map<String, dynamic>> events = <Map<String, dynamic>>[];
+  while (true) {
+    final String text = pending.toString();
+    final int splitAt = text.indexOf('\n\n');
+    if (splitAt < 0) {
+      break;
+    }
+    final String block = text.substring(0, splitAt);
+    pending
+      ..clear()
+      ..write(text.substring(splitAt + 2));
+    for (final String line in block.split('\n')) {
+      final String trimmed = line.trim();
+      if (!trimmed.startsWith('data:')) {
+        continue;
+      }
+      final String raw = trimmed.substring(5).trim();
+      if (raw.isEmpty) {
+        continue;
+      }
+      final dynamic decoded = jsonDecode(raw);
+      if (decoded is Map) {
+        events.add(Map<String, dynamic>.from(decoded));
+      }
+    }
+  }
+  return events;
 }
 
 List<Map<String, dynamic>> asJsonMaps(dynamic data) {

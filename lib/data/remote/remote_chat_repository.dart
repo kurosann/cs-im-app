@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 import '../../models/channel_status.dart';
 import '../../models/chat_message.dart';
 import '../../models/conversation.dart';
+import '../../models/delivery_record.dart';
 import '../../models/forward_channel_status.dart';
 import '../../models/operator_profile.dart';
 import '../../models/platform_channel.dart';
@@ -130,14 +131,19 @@ class RemoteChatRepository implements ChatRepository {
   }
 
   @override
-  Future<List<Conversation>> fetchConversations() async {
+  Future<List<Conversation>> fetchConversations({String keyword = ''}) async {
     final int generation = _sessionGeneration;
     final List<Map<String, dynamic>> rows = <Map<String, dynamic>>[];
     int page = 1;
+    final String queryText = keyword.trim();
     while (true) {
       final dynamic result = await _client.get(
         '/admin/v1/conversations',
-        query: <String, String>{'page': '$page', 'pageSize': '100'},
+        query: <String, String>{
+          'page': '$page',
+          'pageSize': '100',
+          if (queryText.isNotEmpty) 'keyword': queryText,
+        },
       );
       _ensureSession(generation);
       if (result is List) {
@@ -222,6 +228,17 @@ class RemoteChatRepository implements ChatRepository {
   @override
   Future<List<ChannelStatus>> fetchChannels() async {
     final int generation = _sessionGeneration;
+    try {
+      final Map<String, dynamic> monitor = asJsonMap(
+        await _client.get('/admin/v1/channel-monitor'),
+      );
+      _ensureSession(generation);
+      if (monitor.containsKey('apps')) {
+        return _channelsFromMonitor(monitor);
+      }
+    } on ImApiException {
+      // Older servers only expose the app list.
+    }
     final List<Map<String, dynamic>> rows = asJsonMaps(
       await _client.get('/admin/v1/apps'),
     );
@@ -232,18 +249,38 @@ class RemoteChatRepository implements ChatRepository {
         _tenantId = tenantId;
       }
     }
-    return rows
+    return rows.map(_channelFromApp).toList(growable: false);
+  }
+
+  List<ChannelStatus> _channelsFromMonitor(Map<String, dynamic> monitor) {
+    return asJsonMaps(monitor['apps'])
         .map((Map<String, dynamic> row) {
           final String kind = row['kind']?.toString() ?? '';
           final String displayName = row['displayName']?.toString() ?? '';
           final String serviceKey = row['serviceKey']?.toString() ?? '';
+          final String health = row['health']?.toString() ?? '';
+          final int conversations = _asInt(row['conversationCount']) ?? 0;
           return ChannelStatus(
             platform: platformFromLabel(kind.isEmpty ? displayName : kind),
             account: serviceKey.isEmpty ? displayName : serviceKey,
-            online: _appOnline(row),
+            online: health == 'online',
+            detail: conversations > 0
+                ? '$conversations \u4e2a\u4f1a\u8bdd'
+                : _healthLabel(health),
           );
         })
         .toList(growable: false);
+  }
+
+  ChannelStatus _channelFromApp(Map<String, dynamic> row) {
+    final String kind = row['kind']?.toString() ?? '';
+    final String displayName = row['displayName']?.toString() ?? '';
+    final String serviceKey = row['serviceKey']?.toString() ?? '';
+    return ChannelStatus(
+      platform: platformFromLabel(kind.isEmpty ? displayName : kind),
+      account: serviceKey.isEmpty ? displayName : serviceKey,
+      online: _appOnline(row),
+    );
   }
 
   @override
@@ -258,6 +295,7 @@ class RemoteChatRepository implements ChatRepository {
           final String endpoint = row['endpoint']?.toString() ?? '';
           final String name = row['name']?.toString() ?? '';
           return ForwardChannelStatus(
+            id: row['channelId']?.toString() ?? '',
             platform: platform,
             displayName: name.isEmpty ? type : name,
             channelLabel: platform == PlatformChannel.unknown
@@ -461,6 +499,76 @@ class RemoteChatRepository implements ChatRepository {
     return translated;
   }
 
+  @override
+  Future<void> assignConversation({
+    required String conversationId,
+    required String assignee,
+  }) async {
+    await _client.post(
+      '/admin/v1/conversations/${Uri.encodeComponent(conversationId)}/assign',
+      body: <String, dynamic>{'assignee': assignee},
+    );
+  }
+
+  @override
+  Future<void> closeConversation({
+    required String conversationId,
+    String reason = '',
+  }) async {
+    await _client.post(
+      '/admin/v1/conversations/${Uri.encodeComponent(conversationId)}/close',
+      body: <String, dynamic>{'reason': reason},
+    );
+  }
+
+  @override
+  Future<DeliveryRecord> forwardConversation({
+    required String conversationId,
+    required String channelId,
+    String messageId = '',
+  }) async {
+    final Map<String, dynamic> created = asJsonMap(
+      await _client.post(
+        '/admin/v1/conversations/${Uri.encodeComponent(conversationId)}/forward',
+        body: <String, dynamic>{
+          'channelId': channelId,
+          if (messageId.trim().isNotEmpty) 'messageId': messageId.trim(),
+        },
+      ),
+    );
+    return _deliveryFrom(created);
+  }
+
+  @override
+  Future<List<DeliveryRecord>> fetchDeliveries(String conversationId) async {
+    final List<Map<String, dynamic>> rows = asJsonMaps(
+      await _client.get(
+        '/admin/v1/conversations/${Uri.encodeComponent(conversationId)}/deliveries',
+      ),
+    );
+    return rows.map(_deliveryFrom).toList(growable: false);
+  }
+
+  @override
+  Future<void> changePassword({
+    required String currentPassword,
+    required String newPassword,
+  }) async {
+    await _client.post(
+      '/api/v1/auth/password',
+      body: <String, dynamic>{
+        'currentPassword': currentPassword,
+        'newPassword': newPassword,
+      },
+    );
+  }
+
+  Stream<String> watchEvents() {
+    return _client
+        .events('/admin/v1/realtime')
+        .map((Map<String, dynamic> event) => event['type']?.toString() ?? '');
+  }
+
   void close() {
     _client.close();
   }
@@ -490,6 +598,27 @@ String _oppositeLanguage(String text, TranslationLanguage source) {
   return text.runes.any((int value) => value >= 0x3400 && value <= 0x9FFF)
       ? 'en'
       : 'zh-CN';
+}
+
+DeliveryRecord _deliveryFrom(Map<String, dynamic> row) {
+  return DeliveryRecord(
+    id: row['deliveryId']?.toString() ?? '',
+    conversationId: row['conversationId']?.toString() ?? '',
+    messageId: row['messageId']?.toString() ?? '',
+    channelId: row['channelId']?.toString() ?? '',
+    status: row['status']?.toString() ?? '',
+    createdAt: row['createdAt']?.toString() ?? '',
+  );
+}
+
+String _healthLabel(String health) {
+  return switch (health) {
+    'online' => '\u5728\u7ebf',
+    'offline' => '\u79bb\u7ebf',
+    'disabled' => '\u5df2\u505c\u7528',
+    'warning' => '\u6295\u9012\u6392\u961f',
+    _ => '',
+  };
 }
 
 class _TrackedMessage {
@@ -563,6 +692,7 @@ Conversation _conversationFrom(
         ? const <String>[]
         : <String>[forwardedTo],
     updatedAt: updatedAt ?? latest?.sortAt,
+    closed: status == 'closed',
   );
 }
 

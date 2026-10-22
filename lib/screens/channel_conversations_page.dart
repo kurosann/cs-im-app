@@ -18,7 +18,7 @@ class ChannelConversationsPage extends StatelessWidget {
   Widget build(BuildContext context) {
     final AppStore store = AppScope.of(context);
     final List<Conversation> items = store.conversations
-        .where((Conversation c) => c.channel == channel.platform)
+        .where((Conversation c) => !c.closed && c.channel == channel.platform)
         .toList();
     return Scaffold(
       backgroundColor: AppColors.page,

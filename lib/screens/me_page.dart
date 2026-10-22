@@ -20,6 +20,94 @@ class MePage extends StatefulWidget {
 }
 
 class _MePageState extends State<MePage> {
+  Future<void> _changePassword() async {
+    final TextEditingController current = TextEditingController();
+    final TextEditingController nextPassword = TextEditingController();
+    final String? error = await showDialog<String>(
+      context: context,
+      builder: (BuildContext dialogContext) {
+        String? message;
+        return StatefulBuilder(
+          builder: (BuildContext context, StateSetter setDialogState) {
+            return AlertDialog(
+              backgroundColor: AppColors.surface,
+              title: const Text('修改密码'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    controller: current,
+                    obscureText: true,
+                    decoration: InputDecoration(
+                      labelText: '当前密码',
+                      errorText: message,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: nextPassword,
+                    obscureText: true,
+                    decoration: const InputDecoration(labelText: '新密码'),
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(),
+                  child: const Text('取消'),
+                ),
+                TextButton(
+                  onPressed: () {
+                    final String now = current.text;
+                    final String next = nextPassword.text;
+                    if (now.isEmpty || next.isEmpty) {
+                      setDialogState(() => message = '请填写密码');
+                      return;
+                    }
+                    if (next.runes.length < 8) {
+                      setDialogState(() => message = '新密码至少 8 位');
+                      return;
+                    }
+                    if (next == now) {
+                      setDialogState(() => message = '新密码不能与当前密码相同');
+                      return;
+                    }
+                    Navigator.of(dialogContext).pop('ok');
+                  },
+                  child: const Text('保存'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+    final String currentValue = current.text;
+    final String nextValue = nextPassword.text;
+    current.dispose();
+    nextPassword.dispose();
+    if (error != 'ok' || !mounted) {
+      return;
+    }
+    try {
+      await AppScope.read(
+        context,
+      ).changePassword(currentPassword: currentValue, newPassword: nextValue);
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(error.toString())));
+      return;
+    }
+    if (!mounted) {
+      return;
+    }
+    ScaffoldMessenger.of(context)
+        .showSnackBar(const SnackBar(content: Text('密码已更新')));
+  }
+
   @override
   Widget build(BuildContext context) {
     final AppStore store = AppScope.of(context);
@@ -61,6 +149,13 @@ class _MePageState extends State<MePage> {
                   icon: Icons.translate_rounded,
                   title: '语言',
                   trailing: _SettingsValue('简体中文'),
+                ),
+                _SettingsDivider(),
+                _SettingsRow(
+                  icon: Icons.lock_outline_rounded,
+                  title: '修改密码',
+                  onTap: _changePassword,
+                  trailing: const _Chevron(),
                 ),
               ],
             ),

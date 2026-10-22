@@ -190,7 +190,7 @@ class _ChannelRow extends StatelessWidget {
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      channel.account,
+                      channel.detail.isEmpty ? channel.account : ' · ',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(fontSize: 11, color: AppColors.muted),

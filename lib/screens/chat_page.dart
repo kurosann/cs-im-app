@@ -6,6 +6,8 @@ import 'package:flutter/material.dart';
 import '../config/app_config.dart';
 import '../models/chat_message.dart';
 import '../models/conversation.dart';
+import '../models/delivery_record.dart';
+import '../models/forward_channel_status.dart';
 import '../models/platform_channel.dart';
 import '../models/translation_language.dart';
 import '../models/translation_provider.dart';
@@ -1929,130 +1931,354 @@ class _AttachmentOption extends StatelessWidget {
   }
 }
 
-class _CustomerInfoSheet extends StatelessWidget {
+class _CustomerInfoSheet extends StatefulWidget {
   const _CustomerInfoSheet({required this.conversation});
 
   final Conversation conversation;
 
   @override
-  Widget build(BuildContext context) {
-    return Container(
-      decoration: BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
-      child: SafeArea(
-        top: false,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(20, 10, 20, 22),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
+  State<_CustomerInfoSheet> createState() => _CustomerInfoSheetState();
+}
+
+class _CustomerInfoSheetState extends State<_CustomerInfoSheet> {
+  List<DeliveryRecord> _deliveries = const <DeliveryRecord>[];
+  bool _busy = false;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        unawaited(_loadDeliveries());
+      }
+    });
+  }
+
+  Conversation _conversation(AppStore store) {
+    for (final Conversation item in store.conversations) {
+      if (item.id == widget.conversation.id) {
+        return item;
+      }
+    }
+    return widget.conversation;
+  }
+
+  Future<void> _loadDeliveries() async {
+    try {
+      final List<DeliveryRecord> items = await AppScope.read(context)
+          .fetchDeliveries(widget.conversation.id);
+      if (!mounted) {
+        return;
+      }
+      setState(() => _deliveries = items);
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() => _error = error.toString());
+    }
+  }
+
+  Future<void> _run(Future<void> Function() action, String done) async {
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      await action();
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(done)));
+      await _loadDeliveries();
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() => _error = error.toString());
+    } finally {
+      if (mounted) {
+        setState(() => _busy = false);
+      }
+    }
+  }
+
+  Future<void> _closeConversation() async {
+    final TextEditingController reason = TextEditingController();
+    final String? confirmed = await showDialog<String>(
+      context: context,
+      builder: (BuildContext dialogContext) {
+        return AlertDialog(
+          backgroundColor: AppColors.surface,
+          title: const Text('结束会话'),
+          content: TextField(
+            controller: reason,
+            decoration: const InputDecoration(hintText: '结束原因，可以留空'),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('取消'),
+            ),
+            TextButton(
+              onPressed: () =>
+                  Navigator.of(dialogContext).pop(reason.text.trim()),
+              child: const Text('结束'),
+            ),
+          ],
+        );
+      },
+    );
+    reason.dispose();
+    if (confirmed == null || !mounted) {
+      return;
+    }
+    await _run(() async {
+      await AppScope.read(context)
+          .closeConversation(widget.conversation.id, reason: confirmed);
+      if (!mounted) {
+        return;
+      }
+      Navigator.of(context)
+        ..pop()
+        ..pop();
+    }, '会话已结束');
+  }
+
+  Future<void> _forward() async {
+    final AppStore store = AppScope.read(context);
+    final List<ForwardChannelStatus> channels = store.forwardChannels
+        .where(
+          (ForwardChannelStatus item) =>
+              item.id.isNotEmpty && item.state == ForwardChannelState.connected,
+        )
+        .toList();
+    if (channels.isEmpty) {
+      setState(() => _error = '没有可转发的渠道');
+      return;
+    }
+    final String? channelId = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: AppColors.surface,
+      builder: (BuildContext sheetContext) {
+        return SafeArea(
+          child: ListView(
+            shrinkWrap: true,
             children: [
-              Center(
-                child: Container(
-                  width: 36,
-                  height: 4,
-                  decoration: BoxDecoration(
-                    color: AppColors.lavenderDeep,
-                    borderRadius: BorderRadius.circular(999),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 16),
-              const Text(
-                '客户信息',
-                style: TextStyle(fontSize: 17, fontWeight: FontWeight.w600),
-              ),
-              const SizedBox(height: 16),
-              Row(
-                children: [
-                  ChannelAvatar(conversation: conversation, size: 48),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          conversation.name,
-                          style: const TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                        const SizedBox(height: 2),
-                        Text(
-                          conversation.channel.label,
-                          style: TextStyle(
-                            fontSize: 13,
-                            color: AppColors.slate500,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 16),
-              Divider(height: 1, color: AppColors.line),
-              const SizedBox(height: 12),
-              _SheetInfoLine(
-                label: '业务渠道',
-                trailing: Text(conversation.channel.label, style: _valueStyle),
-              ),
-              const SizedBox(height: 10),
-              _SheetInfoLine(
-                label: '当前状态',
-                trailing: _StatusPill(status: conversation.status),
-              ),
-              const SizedBox(height: 10),
-              _SheetInfoLine(
-                label: '负责人',
-                trailing: Text(conversation.assignee, style: _valueStyle),
-              ),
-              const SizedBox(height: 16),
-              const Text(
-                '转发去向',
-                style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
-              ),
-              const SizedBox(height: 8),
-              if (conversation.forwardTargets.isEmpty)
-                Text(
-                  '未配置',
-                  style: TextStyle(fontSize: 12, color: AppColors.muted),
-                )
-              else
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: [
-                    for (final String target in conversation.forwardTargets)
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 10,
-                          vertical: 5,
-                        ),
-                        decoration: BoxDecoration(
-                          color: AppColors.surface,
-                          borderRadius: BorderRadius.circular(999),
-                          border: Border.all(color: AppColors.cardBorder),
-                        ),
-                        child: Text(
-                          target,
-                          style: TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w500,
-                            color: AppColors.ink,
-                          ),
-                        ),
-                      ),
-                  ],
+              for (final ForwardChannelStatus channel in channels)
+                ListTile(
+                  title: Text(channel.displayName),
+                  subtitle: Text(channel.target),
+                  onTap: () => Navigator.of(sheetContext).pop(channel.id),
                 ),
             ],
           ),
+        );
+      },
+    );
+    if (channelId == null || !mounted) {
+      return;
+    }
+    await _run(() async {
+      await AppScope.read(context)
+          .forwardConversation(widget.conversation.id, channelId);
+    }, '已提交转发');
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final AppStore store = AppScope.of(context);
+    final Conversation conversation = _conversation(store);
+    return Container(
+      constraints: BoxConstraints(
+        maxHeight: MediaQuery.sizeOf(context).height * 0.86,
+      ),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      child: SafeArea(
+        top: false,
+        child: ListView(
+          shrinkWrap: true,
+          padding: const EdgeInsets.fromLTRB(20, 10, 20, 22),
+          children: [
+            Center(
+              child: Container(
+                width: 36,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: AppColors.lavenderDeep,
+                  borderRadius: BorderRadius.circular(999),
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+            const Text(
+              '客户信息',
+              style: TextStyle(fontSize: 17, fontWeight: FontWeight.w600),
+            ),
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                ChannelAvatar(conversation: conversation, size: 48),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        conversation.name,
+                        style: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        conversation.channel.label,
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: AppColors.slate500,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            Divider(height: 1, color: AppColors.line),
+            const SizedBox(height: 12),
+            _SheetInfoLine(
+              label: '业务渠道',
+              trailing: Text(conversation.channel.label, style: _valueStyle),
+            ),
+            const SizedBox(height: 10),
+            _SheetInfoLine(
+              label: '当前状态',
+              trailing: _StatusPill(status: conversation.status),
+            ),
+            const SizedBox(height: 10),
+            _SheetInfoLine(
+              label: '负责人',
+              trailing: Text(conversation.assignee, style: _valueStyle),
+            ),
+            const SizedBox(height: 16),
+            const Text(
+              '转发去向',
+              style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
+            ),
+            const SizedBox(height: 8),
+            if (conversation.forwardTargets.isEmpty)
+              Text(
+                '未配置',
+                style: TextStyle(fontSize: 12, color: AppColors.muted),
+              )
+            else
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  for (final String target in conversation.forwardTargets)
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 5,
+                      ),
+                      decoration: BoxDecoration(
+                        color: AppColors.surface,
+                        borderRadius: BorderRadius.circular(999),
+                        border: Border.all(color: AppColors.cardBorder),
+                      ),
+                      child: Text(
+                        target,
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w500,
+                          color: AppColors.ink,
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            const SizedBox(height: 16),
+            const Text(
+              '投递记录',
+              style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
+            ),
+            const SizedBox(height: 8),
+            if (_deliveries.isEmpty)
+              Text(
+                '暂无投递',
+                style: TextStyle(fontSize: 12, color: AppColors.muted),
+              )
+            else
+              for (final DeliveryRecord delivery in _deliveries)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 6),
+                  child: Text(
+                    '${_deliveryName(store, delivery.channelId)} · ${delivery.statusLabel}',
+                    style: TextStyle(fontSize: 12, color: AppColors.inkSoft),
+                  ),
+                ),
+            if (_error != null) ...[
+              const SizedBox(height: 8),
+              Text(
+                _error!,
+                style: TextStyle(fontSize: 12, color: AppColors.danger),
+              ),
+            ],
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: _busy
+                        ? null
+                        : () => _run(
+                            () =>
+                                AppScope.read(context)
+                                    .claimConversation(widget.conversation.id),
+                            '已认领',
+                          ),
+                    child: const Text('认领'),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: _busy ? null : _forward,
+                    child: const Text('转发'),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: FilledButton(
+                    style: FilledButton.styleFrom(
+                      backgroundColor: AppColors.danger,
+                      foregroundColor: Colors.white,
+                    ),
+                    onPressed: _busy ? null : _closeConversation,
+                    child: const Text('结束'),
+                  ),
+                ),
+              ],
+            ),
+          ],
         ),
       ),
     );
+  }
+
+  String _deliveryName(AppStore store, String channelId) {
+    for (final ForwardChannelStatus channel in store.forwardChannels) {
+      if (channel.id == channelId) {
+        return channel.displayName;
+      }
+    }
+    return channelId.isEmpty ? '渠道' : channelId;
   }
 }
 

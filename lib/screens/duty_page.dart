@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../models/conversation.dart';
@@ -7,8 +9,47 @@ import '../theme/app_theme.dart';
 import '../widgets/conversation_tile.dart';
 import 'chat_page.dart';
 
-class DutyPage extends StatelessWidget {
+class DutyPage extends StatefulWidget {
   const DutyPage({super.key});
+
+  @override
+  State<DutyPage> createState() => _DutyPageState();
+}
+
+class _DutyPageState extends State<DutyPage> {
+  final TextEditingController _searchController = TextEditingController();
+  final FocusNode _searchFocus = FocusNode();
+  Timer? _searchDebounce;
+  bool _searchOpen = false;
+
+  @override
+  void dispose() {
+    _searchDebounce?.cancel();
+    _searchController.dispose();
+    _searchFocus.dispose();
+    super.dispose();
+  }
+
+  void _toggleSearch() {
+    setState(() => _searchOpen = !_searchOpen);
+    if (_searchOpen) {
+      _searchFocus.requestFocus();
+      return;
+    }
+    _searchDebounce?.cancel();
+    _searchController.clear();
+    unawaited(AppScope.read(context).searchConversations(''));
+  }
+
+  void _onSearchChanged(String value) {
+    _searchDebounce?.cancel();
+    _searchDebounce = Timer(const Duration(milliseconds: 300), () {
+      if (!mounted) {
+        return;
+      }
+      unawaited(AppScope.read(context).searchConversations(value));
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -48,10 +89,40 @@ class DutyPage extends StatelessWidget {
                   ],
                 ),
               ),
-              const _CircleIcon(icon: Icons.search_rounded),
+              _CircleIcon(
+                icon: _searchOpen ? Icons.close_rounded : Icons.search_rounded,
+                tooltip: _searchOpen ? '关闭搜索' : '搜索',
+                onTap: _toggleSearch,
+              ),
             ],
           ),
         ),
+        if (_searchOpen)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
+            child: TextField(
+              key: const ValueKey('duty-search'),
+              controller: _searchController,
+              focusNode: _searchFocus,
+              onChanged: _onSearchChanged,
+              textInputAction: TextInputAction.search,
+              decoration: InputDecoration(
+                hintText: '搜索编号、客户或主题',
+                isDense: true,
+                filled: true,
+                fillColor: AppColors.lavender,
+                prefixIcon: Icon(
+                  Icons.search_rounded,
+                  size: 18,
+                  color: AppColors.inkSoft,
+                ),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(999),
+                  borderSide: BorderSide.none,
+                ),
+              ),
+            ),
+          ),
         SizedBox(
           height: 36,
           child: ListView.separated(
@@ -117,20 +188,29 @@ class DutyPage extends StatelessWidget {
 }
 
 class _CircleIcon extends StatelessWidget {
-  const _CircleIcon({required this.icon});
+  const _CircleIcon({required this.icon, required this.onTap, this.tooltip});
 
   final IconData icon;
+  final VoidCallback onTap;
+  final String? tooltip;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      width: 38,
-      height: 38,
-      decoration: BoxDecoration(
+    return Tooltip(
+      message: tooltip ?? '',
+      child: Material(
         color: AppColors.lavender,
-        shape: BoxShape.circle,
+        shape: const CircleBorder(),
+        child: InkWell(
+          customBorder: const CircleBorder(),
+          onTap: onTap,
+          child: SizedBox(
+            width: 38,
+            height: 38,
+            child: Icon(icon, size: 18, color: AppColors.inkSoft),
+          ),
+        ),
       ),
-      child: Icon(icon, size: 18, color: AppColors.inkSoft),
     );
   }
 }

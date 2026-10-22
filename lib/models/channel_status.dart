@@ -5,6 +5,7 @@ class ChannelStatus {
     required this.platform,
     required this.account,
     required this.online,
+    this.detail = '',
   });
 
   final PlatformChannel platform;
@@ -13,6 +14,9 @@ class ChannelStatus {
   final String account;
 
   final bool online;
+
+  /// 健康或会话数量等补充信息，来自渠道监控接口。
+  final String detail;
 
   String get name => platform.label;
 }

@@ -1,10 +1,12 @@
 import '../models/channel_status.dart';
 import '../models/chat_message.dart';
 import '../models/conversation.dart';
+import '../models/delivery_record.dart';
 import '../models/forward_channel_status.dart';
 import '../models/platform_channel.dart';
 import '../models/operator_profile.dart';
 import '../models/translation_language.dart';
+import 'remote/im_api_client.dart';
 import 'chat_repository.dart';
 import 'mock_data.dart';
 
@@ -50,6 +52,7 @@ class MockChatRepository implements ChatRepository {
   );
   final List<ForwardChannelStatus> _forwardChannels = const [
     ForwardChannelStatus(
+      id: 'ch_telegram',
       platform: PlatformChannel.telegram,
       displayName: '售后值班群',
       channelLabel: 'Telegram',
@@ -57,6 +60,7 @@ class MockChatRepository implements ChatRepository {
       state: ForwardChannelState.connected,
     ),
     ForwardChannelStatus(
+      id: 'ch_whatsapp',
       platform: PlatformChannel.whatsapp,
       displayName: '海外客服',
       channelLabel: 'WhatsApp',
@@ -64,6 +68,7 @@ class MockChatRepository implements ChatRepository {
       state: ForwardChannelState.disconnected,
     ),
     ForwardChannelStatus(
+      id: 'ch_feishu',
       platform: PlatformChannel.unknown,
       displayName: '客服转发群',
       channelLabel: '飞书',
@@ -72,10 +77,108 @@ class MockChatRepository implements ChatRepository {
     ),
   ];
   int _localMessageSeq = 1000;
+  final List<DeliveryRecord> _deliveries = <DeliveryRecord>[];
 
   @override
-  Future<List<Conversation>> fetchConversations() async =>
-      List.unmodifiable(_conversations);
+  Future<List<Conversation>> fetchConversations({String keyword = ''}) async {
+    final String query = keyword.trim().toLowerCase();
+    if (query.isEmpty) {
+      return List.unmodifiable(_conversations);
+    }
+    return _conversations
+        .where(
+          (Conversation item) =>
+              item.id.toLowerCase().contains(query) ||
+              item.name.toLowerCase().contains(query) ||
+              item.lastMessage.toLowerCase().contains(query) ||
+              item.assignee.toLowerCase().contains(query),
+        )
+        .toList(growable: false);
+  }
+
+  @override
+  Future<void> assignConversation({
+    required String conversationId,
+    required String assignee,
+  }) async {
+    final int index = _conversations.indexWhere(
+      (Conversation item) => item.id == conversationId,
+    );
+    if (index < 0) {
+      throw ImApiException('会话不存在');
+    }
+    _conversations[index] = _conversations[index].copyWith(
+      assignee: assignee,
+      status: ConversationStatus.human,
+      closed: false,
+    );
+  }
+
+  @override
+  Future<void> closeConversation({
+    required String conversationId,
+    String reason = '',
+  }) async {
+    final int index = _conversations.indexWhere(
+      (Conversation item) => item.id == conversationId,
+    );
+    if (index < 0) {
+      throw ImApiException('会话不存在');
+    }
+    _conversations[index] = _conversations[index].copyWith(
+      closed: true,
+      needsReply: false,
+    );
+  }
+
+  @override
+  Future<DeliveryRecord> forwardConversation({
+    required String conversationId,
+    required String channelId,
+    String messageId = '',
+  }) async {
+    final int index = _conversations.indexWhere(
+      (Conversation item) => item.id == conversationId,
+    );
+    if (index < 0) {
+      throw ImApiException('会话不存在');
+    }
+    final ForwardChannelStatus channel = _forwardChannels.firstWhere(
+      (ForwardChannelStatus item) => item.id == channelId,
+      orElse: () => throw ImApiException('转发渠道不存在'),
+    );
+    final Conversation current = _conversations[index];
+    if (!current.forwardTargets.contains(channel.displayName)) {
+      _conversations[index] = current.copyWith(
+        forwardTargets: <String>[
+          ...current.forwardTargets,
+          channel.displayName,
+        ],
+      );
+    }
+    final DeliveryRecord delivery = DeliveryRecord(
+      id: 'dlv_${_localMessageSeq++}',
+      conversationId: conversationId,
+      messageId: messageId,
+      channelId: channelId,
+      status: 'queued',
+    );
+    _deliveries.add(delivery);
+    return delivery;
+  }
+
+  @override
+  Future<List<DeliveryRecord>> fetchDeliveries(String conversationId) async {
+    return _deliveries
+        .where((DeliveryRecord item) => item.conversationId == conversationId)
+        .toList(growable: false);
+  }
+
+  @override
+  Future<void> changePassword({
+    required String currentPassword,
+    required String newPassword,
+  }) async {}
 
   @override
   Future<List<ChatMessage>> fetchMessages(String conversationId) async =>

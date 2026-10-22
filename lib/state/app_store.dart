@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
@@ -9,6 +10,7 @@ import '../data/remote/remote_chat_repository.dart';
 import '../models/channel_status.dart';
 import '../models/chat_message.dart';
 import '../models/conversation.dart';
+import '../models/delivery_record.dart';
 import '../models/forward_channel_status.dart';
 import '../models/operator_profile.dart';
 import '../data/translation_service.dart';
@@ -38,6 +40,10 @@ class AppStore extends ChangeNotifier {
   };
 
   final List<Conversation> _conversations = [];
+  String _conversationQuery = '';
+  StreamSubscription<String>? _realtimeSub;
+  Timer? _realtimeDebounce;
+  int _realtimeGeneration = 0;
   final Map<String, List<ChatMessage>> _messages = {};
   final List<ChannelStatus> _channels = [];
   final List<ForwardChannelStatus> _forwardChannels = [];
@@ -103,31 +109,36 @@ class AppStore extends ChangeNotifier {
       List.unmodifiable(_forwardChannels);
   OperatorProfile? get profile => _profile;
 
-  int get waitingCount => _conversations
+  List<Conversation> get openConversations => List.unmodifiable(
+    _conversations.where((Conversation conversation) => !conversation.closed),
+  );
+
+  int get waitingCount => openConversations
       .where((Conversation c) => c.status == ConversationStatus.waiting)
       .length;
-  int get handlingCount => _conversations
+  int get handlingCount => openConversations
       .where((Conversation c) => c.status == ConversationStatus.human)
       .length;
-  int get aiHandledCount => _conversations
+  int get aiHandledCount => openConversations
       .where((Conversation c) => c.status == ConversationStatus.ai)
       .length;
 
   List<Conversation> get filteredConversations {
+    final List<Conversation> visible = openConversations;
     return switch (_filterIndex) {
       1 =>
-        _conversations
+        visible
             .where((Conversation c) => c.status == ConversationStatus.waiting)
             .toList(),
       2 =>
-        _conversations
+        visible
             .where((Conversation c) => c.status == ConversationStatus.ai)
             .toList(),
       3 =>
-        _conversations
+        visible
             .where((Conversation c) => c.status == ConversationStatus.human)
             .toList(),
-      _ => List.unmodifiable(_conversations),
+      _ => visible,
     };
   }
 
@@ -147,6 +158,7 @@ class AppStore extends ChangeNotifier {
   }
 
   Future<void> logout() async {
+    await stopRealtime();
     _clearWorkspace();
     await _repository.logout();
   }
@@ -154,6 +166,7 @@ class AppStore extends ChangeNotifier {
   void _clearWorkspace() {
     _sessionGeneration++;
     _filterIndex = 0;
+    _conversationQuery = '';
     _conversations.clear();
     _messages.clear();
     _channels.clear();
@@ -176,8 +189,8 @@ class AppStore extends ChangeNotifier {
     }
   }
 
-  Future<void> refresh() async {
-    if (_loading || _refreshing) {
+  Future<void> refresh({bool force = false}) async {
+    if (!force && (_loading || _refreshing)) {
       return;
     }
     _refreshing = true;
@@ -196,7 +209,7 @@ class AppStore extends ChangeNotifier {
   Future<void> _loadWorkspace() async {
     final int generation = _sessionGeneration;
     final List<Conversation> conversations = await _repository
-        .fetchConversations();
+        .fetchConversations(keyword: _conversationQuery);
     if (_disposed || generation != _sessionGeneration) {
       return;
     }
@@ -232,9 +245,107 @@ class AppStore extends ChangeNotifier {
     _profile = profile;
   }
 
+  Future<void> searchConversations(String keyword) async {
+    final String next = keyword.trim();
+    if (next == _conversationQuery && _conversations.isNotEmpty) {
+      return;
+    }
+    _conversationQuery = next;
+    final int generation = _sessionGeneration;
+    final List<Conversation> conversations = await _repository
+        .fetchConversations(keyword: _conversationQuery);
+    if (_disposed || generation != _sessionGeneration) {
+      return;
+    }
+    _conversations
+      ..clear()
+      ..addAll(conversations);
+    notifyListeners();
+  }
+
+  Future<void> claimConversation(String conversationId) async {
+    final String assignee = _profile?.name.trim().isNotEmpty == true
+        ? _profile!.name.trim()
+        : 'agent';
+    await _repository.assignConversation(
+      conversationId: conversationId,
+      assignee: assignee,
+    );
+    await refresh(force: true);
+  }
+
+  Future<void> closeConversation(
+    String conversationId, {
+    String reason = '',
+  }) async {
+    await _repository.closeConversation(
+      conversationId: conversationId,
+      reason: reason,
+    );
+    await refresh(force: true);
+  }
+
+  Future<DeliveryRecord> forwardConversation(
+    String conversationId,
+    String channelId,
+  ) async {
+    final DeliveryRecord delivery = await _repository.forwardConversation(
+      conversationId: conversationId,
+      channelId: channelId,
+    );
+    await refresh(force: true);
+    return delivery;
+  }
+
+  Future<List<DeliveryRecord>> fetchDeliveries(String conversationId) {
+    return _repository.fetchDeliveries(conversationId);
+  }
+
+  Future<void> changePassword({
+    required String currentPassword,
+    required String newPassword,
+  }) {
+    return _repository.changePassword(
+      currentPassword: currentPassword,
+      newPassword: newPassword,
+    );
+  }
+
+  Future<void> startRealtime() async {
+    final ChatRepository repository = _repository;
+    if (repository is! RemoteChatRepository) {
+      return;
+    }
+    await stopRealtime();
+    final int generation = ++_realtimeGeneration;
+    _realtimeSub = repository.watchEvents().listen((String type) {
+      if (type.isEmpty || generation != _realtimeGeneration || _disposed) {
+        return;
+      }
+      _realtimeDebounce?.cancel();
+      _realtimeDebounce = Timer(const Duration(milliseconds: 250), () {
+        if (generation != _realtimeGeneration || _disposed) {
+          return;
+        }
+        unawaited(refresh());
+      });
+    }, onError: (Object error, StackTrace stackTrace) {});
+  }
+
+  Future<void> stopRealtime() async {
+    _realtimeGeneration++;
+    _realtimeDebounce?.cancel();
+    final StreamSubscription<String>? subscription = _realtimeSub;
+    _realtimeSub = null;
+    await subscription?.cancel();
+  }
+
   @override
   void dispose() {
     _disposed = true;
+    _realtimeGeneration++;
+    _realtimeDebounce?.cancel();
+    _realtimeSub?.cancel();
     final ChatRepository repository = _repository;
     if (repository is RemoteChatRepository) {
       repository.close();

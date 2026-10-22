@@ -1,6 +1,7 @@
 import '../models/channel_status.dart';
 import '../models/chat_message.dart';
 import '../models/conversation.dart';
+import '../models/delivery_record.dart';
 import '../models/forward_channel_status.dart';
 import '../models/operator_profile.dart';
 import '../models/translation_language.dart';
@@ -13,7 +14,30 @@ abstract interface class ChatRepository {
 
   Future<void> logout();
 
-  Future<List<Conversation>> fetchConversations();
+  Future<List<Conversation>> fetchConversations({String keyword = ''});
+
+  Future<void> assignConversation({
+    required String conversationId,
+    required String assignee,
+  });
+
+  Future<void> closeConversation({
+    required String conversationId,
+    String reason = '',
+  });
+
+  Future<DeliveryRecord> forwardConversation({
+    required String conversationId,
+    required String channelId,
+    String messageId = '',
+  });
+
+  Future<List<DeliveryRecord>> fetchDeliveries(String conversationId);
+
+  Future<void> changePassword({
+    required String currentPassword,
+    required String newPassword,
+  });
 
   Future<List<ChatMessage>> fetchMessages(String conversationId);
 
