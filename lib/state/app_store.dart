@@ -74,6 +74,7 @@ class AppStore extends ChangeNotifier {
   final Set<TranslationProvider> _testingTranslationProviders = {};
   bool _checkingTranslationProviderLatencies = false;
   bool _disposed = false;
+  int _sessionGeneration = 0;
 
   bool get loading => _loading;
   int get filterIndex => _filterIndex;
@@ -137,13 +138,41 @@ class AppStore extends ChangeNotifier {
     }
   }
 
+  Future<void> login({
+    required String account,
+    required String password,
+  }) async {
+    await _repository.login(account: account, password: password);
+    _clearWorkspace();
+  }
+
+  Future<void> logout() async {
+    _clearWorkspace();
+    await _repository.logout();
+  }
+
+  void _clearWorkspace() {
+    _sessionGeneration++;
+    _filterIndex = 0;
+    _conversations.clear();
+    _messages.clear();
+    _channels.clear();
+    _forwardChannels.clear();
+    _profile = null;
+    _loading = true;
+    notifyListeners();
+  }
+
   Future<void> init() async {
+    final int generation = _sessionGeneration;
     try {
       await _loadSettings();
       await _loadWorkspace();
     } finally {
-      _loading = false;
-      notifyListeners();
+      if (!_disposed && generation == _sessionGeneration) {
+        _loading = false;
+        notifyListeners();
+      }
     }
   }
 
@@ -154,7 +183,9 @@ class AppStore extends ChangeNotifier {
     _refreshing = true;
     try {
       await _loadWorkspace();
-      notifyListeners();
+      if (!_disposed) {
+        notifyListeners();
+      }
     } catch (_) {
       // Keep the last successful snapshot when the server blips.
     } finally {
@@ -163,8 +194,12 @@ class AppStore extends ChangeNotifier {
   }
 
   Future<void> _loadWorkspace() async {
+    final int generation = _sessionGeneration;
     final List<Conversation> conversations = await _repository
         .fetchConversations();
+    if (_disposed || generation != _sessionGeneration) {
+      return;
+    }
     final Map<String, List<ChatMessage>> messages =
         <String, List<ChatMessage>>{};
     for (final Conversation conversation in conversations) {
@@ -172,10 +207,16 @@ class AppStore extends ChangeNotifier {
         await _repository.fetchMessages(conversation.id),
       );
     }
+    if (_disposed || generation != _sessionGeneration) {
+      return;
+    }
     final List<ChannelStatus> channels = await _repository.fetchChannels();
     final List<ForwardChannelStatus> forwardChannels = await _repository
         .fetchForwardChannels();
     final OperatorProfile profile = await _repository.fetchProfile();
+    if (_disposed || generation != _sessionGeneration) {
+      return;
+    }
     _conversations
       ..clear()
       ..addAll(conversations);
@@ -258,6 +299,10 @@ class AppStore extends ChangeNotifier {
   }
 
   bool _shouldUseBackendFirst(TranslationProvider provider) {
+    if (_repository is RemoteChatRepository &&
+        provider == TranslationProvider.auto) {
+      return true;
+    }
     if (provider == TranslationProvider.auto) {
       if (_testedTranslationProviders.isEmpty) {
         return false;

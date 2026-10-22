@@ -4,7 +4,7 @@
 
 > 文档入口：[docs/README.md](docs/README.md)（计划 / 方案 / 规则 / AI 产物 / 历史 / 素材）
 
-## 当前范围（V1，纯前端）
+## 当前范围（V1）
 
 - 值守：30 条 Mock 会话，支持筛选（全部 / 待人工 / AI / 人工）、未读角标、未回复标识、头像右下角平台来源 logo；
 - 聊天：客户 / AI / 客服消息气泡，文本发送（本地 Mock），右上角「…」查看客户信息，支持 Mock 双语翻译、输入框边写边译、图片/视频/语音消息展示、悬浮毛玻璃输入区、图片/视频/文件附件入口；
@@ -14,7 +14,7 @@
 - 字体：全局使用 Inter，中文通过 Noto Sans SC 回退；翻译设置中的标题、字段和选项统一字号与字重；
 - 翻译：开启后会对所有文本消息实时调用机器翻译，Mock 消息同样生效；
 - 设置持久化：主题、消息提醒、翻译开关与语言设置通过 `shared_preferences` 保存；
-- 数据：Mock-first。UI 只依赖 `AppStore` → `ChatRepository`，后端接入实现 `RemoteChatRepository` 即可。
+- 数据：默认 Mock 演示；远程模式通过 `AppStore` → `ChatRepository` → `RemoteChatRepository` 对接 cs-im-server。
 
 > V1 的本地缓存统计与清理为 Mock 状态，真实文件统计、自动清理与本地删除待接入；隐私协议与存储协议为原型草案，上线前需法务审核。
 
@@ -29,13 +29,20 @@ flutter analyze
 flutter test
 ```
 
-接入 cs-im-server 时关闭 Mock。登录账号会作为客服 `sender.id`，密码栏填写访问 Token（开发环境默认 `dev-access-token`）：
+接入 cs-im-server 的 `vecor` 分支时关闭 Mock，使用管理员分配的工作台账号或邮箱及密码登录。账号需具备 `gateway:admin` 权限；客服消息的 `sender.id` 使用登录结果中的 `userKey`。
 
 ```sh
 flutter run --dart-define=CS_IM_USE_MOCK=false --dart-define=CS_IM_API_BASE=http://127.0.0.1:19091
 ```
 
-远程模式走 `/admin/v1`：会话、消息、业务 App、转发渠道。文本消息和 http(s) 媒体地址可以发送；服务端没有上传、语音、账号密码和会话未读接口。已读会把客户消息状态改成 `read`。
+远程模式对接：
+
+- 登录、会话验证和登出：`/api/v1/auth/login`、`/api/v1/auth/me`、`/api/v1/auth/logout`。密码和会话 Token 只在内存中使用，退出时清空工作区数据并请求撤销 Token。
+- 值守：读取 `/admin/v1/conversations` 的 `items/total` 分页、服务端未读数及回复状态，每 8 秒刷新会话与消息，展示 AI 回复；通过 `/admin/v1/conversations/:id/read` 标记已读。
+- 消息和渠道：使用 `/admin/v1` 下的消息、业务 App、转发渠道接口。文本消息和 http(s) 媒体地址可以发送；文件上传与语音发送仍需后端支持。
+- 翻译：「自动」优先请求 `/api/v1/translations`，失败时使用 `/admin/v1/translate`（LLM / Google），仍失败时使用客户端翻译。手动选择翻译源时沿用客户端测速和回退。自动目标语言按中英文方向转换为具体语言代码。
+
+可通过 `--dart-define=CS_IM_OPERATOR_ID=账号或邮箱` 预填账号。开发时请使用实际可访问的服务器地址；Android 模拟器访问宿主机通常使用 `10.0.2.2`。
 
 ## 目录
 

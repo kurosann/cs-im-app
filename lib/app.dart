@@ -70,25 +70,36 @@ class _CsImAppState extends State<CsImApp> {
   }) async {
     if (AppConfig.useMockData) {
       await Future<void>.delayed(const Duration(milliseconds: 280));
-    } else {
-      await _store.connect(account: account, token: password);
+    }
+    await _store.login(account: account, password: password);
+    try {
+      await _store.init();
+    } catch (_) {
+      try {
+        await _store.logout();
+      } catch (_) {
+        // Preserve the workspace loading error shown on the login form.
+      }
+      rethrow;
     }
     if (!mounted) {
       return;
     }
     setState(() => _authenticated = true);
-    if (_store.loading) {
-      unawaited(_store.init());
-    }
     _startRefresh();
   }
 
-  void _logout() {
+  Future<void> _logout() async {
     _refreshTimer?.cancel();
     if (!mounted) {
       return;
     }
     setState(() => _authenticated = false);
+    try {
+      await _store.logout();
+    } catch (_) {
+      // Local session data is cleared even if the server cannot be reached.
+    }
   }
 
   @override

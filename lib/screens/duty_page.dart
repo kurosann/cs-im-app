@@ -29,7 +29,7 @@ class DutyPage extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      '橙子科技',
+                      store.profile?.tenantName ?? '客服工作区',
                       style: TextStyle(
                         fontSize: 26,
                         fontWeight: FontWeight.w600,

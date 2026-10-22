@@ -12,13 +12,7 @@ abstract final class AppConfig {
     defaultValue: true,
   );
 
-  /// 可选。远程登录时预填访问 Token，密码栏仍可改。
-  static const String accessToken = String.fromEnvironment(
-    'CS_IM_ACCESS_TOKEN',
-    defaultValue: '',
-  );
-
-  /// 可选。远程登录时预填值守账号，发送消息时作为 sender.id。
+  /// 可选。远程登录时预填账号或邮箱，消息身份取自服务端登录结果。
   static const String operatorId = String.fromEnvironment(
     'CS_IM_OPERATOR_ID',
     defaultValue: '',

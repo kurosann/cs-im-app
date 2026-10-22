@@ -7,9 +7,12 @@ import '../models/translation_language.dart';
 
 /// 数据访问边界。
 ///
-/// UI 与状态层只依赖本接口：当前使用 [MockChatRepository]，
-/// 接入 cs-im-route 后端后替换为 RemoteChatRepository 即可。
+/// UI 通过状态层使用本接口，由 Mock 或 cs-im-server 实现。
 abstract interface class ChatRepository {
+  Future<void> login({required String account, required String password});
+
+  Future<void> logout();
+
   Future<List<Conversation>> fetchConversations();
 
   Future<List<ChatMessage>> fetchMessages(String conversationId);

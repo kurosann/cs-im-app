@@ -218,7 +218,21 @@ void main() {
     expect(find.text('Google 翻译'), findsWidgets);
     expect(find.text('腾讯翻译君'), findsOneWidget);
     expect(find.text('百度翻译'), findsOneWidget);
+    final Finder providerOptions = find.descendant(
+      of: find.byKey(const ValueKey('translation-provider-dropdown')),
+      matching: find.byType(Scrollable),
+    );
+    await tester.scrollUntilVisible(
+      find.text('有道翻译'),
+      60,
+      scrollable: providerOptions,
+    );
     expect(find.text('有道翻译'), findsOneWidget);
+    await tester.scrollUntilVisible(
+      find.text('Google 翻译').last,
+      -60,
+      scrollable: providerOptions,
+    );
     await tester.tap(find.text('Google 翻译').last);
     await tester.pumpAndSettle();
     expect(find.text('Google 翻译'), findsOneWidget);

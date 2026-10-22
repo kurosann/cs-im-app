@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:http/http.dart' as http;
 
 import '../../models/channel_status.dart';
@@ -12,9 +14,8 @@ import 'im_api_client.dart';
 
 /// cs-im-server admin API used by the duty app.
 ///
-/// Business token on `/admin/v1`. There is no password login and no media
-/// upload; the password field is the bearer token, and media must already
-/// be an absolute http(s) URL.
+/// Staff sessions authenticate through the server; media must already be an
+/// absolute http(s) URL because there is no upload endpoint.
 class RemoteChatRepository implements ChatRepository {
   RemoteChatRepository({
     required String baseUrl,
@@ -30,8 +31,77 @@ class RemoteChatRepository implements ChatRepository {
   final ImApiClient _client;
   String _operatorId;
   String? _tenantId;
+  Map<String, dynamic>? _sessionUser;
+  int _sessionGeneration = 0;
   final Map<String, List<_TrackedMessage>> _messages =
       <String, List<_TrackedMessage>>{};
+
+  @override
+  Future<void> login({
+    required String account,
+    required String password,
+  }) async {
+    if (account.trim().isEmpty || password.isEmpty) {
+      throw ImApiException('请输入账号和密码');
+    }
+    final Map<String, dynamic> result = asJsonMap(
+      await _client.post(
+        '/api/v1/auth/login',
+        authenticated: false,
+        body: <String, dynamic>{
+          'identifier': account.trim(),
+          'password': password,
+        },
+      ),
+    );
+    final Map<String, dynamic> user = asJsonMap(result['user']);
+    final Map<String, dynamic> session = asJsonMap(result['token']);
+    final String token = session['token']?.toString().trim() ?? '';
+    if (token.isEmpty || (user['userKey']?.toString() ?? '').isEmpty) {
+      throw ImApiException('服务端未返回有效登录会话');
+    }
+    final String previousToken = _client.token;
+    _client.token = token;
+    try {
+      final Map<String, dynamic> principal = asJsonMap(
+        await _client.get('/api/v1/auth/me'),
+      );
+      final List<dynamic> scopes = principal['scopes'] is List
+          ? principal['scopes'] as List<dynamic>
+          : const <dynamic>[];
+      if (principal['kind'] != 'human' ||
+          (!scopes.contains('*') && !scopes.contains('gateway:admin'))) {
+        throw ImApiException('当前账号没有客服值守权限，请联系管理员');
+      }
+      _operatorId = user['userKey'].toString();
+      _tenantId = principal['tenantId']?.toString();
+      _sessionUser = user;
+      _sessionGeneration++;
+      _messages.clear();
+    } catch (_) {
+      try {
+        await _client.post('/api/v1/auth/logout');
+      } catch (_) {
+        // Login failures must still restore the previous local session.
+      }
+      _client.token = previousToken;
+      rethrow;
+    }
+  }
+
+  @override
+  Future<void> logout() async {
+    final Future<dynamic>? revoke = _client.token.isEmpty
+        ? null
+        : _client.post('/api/v1/auth/logout');
+    _client.token = '';
+    _operatorId = '';
+    _tenantId = null;
+    _sessionUser = null;
+    _sessionGeneration++;
+    _messages.clear();
+    await revoke;
+  }
 
   Future<void> connect({required String account, required String token}) async {
     final String previousToken = _client.token;
@@ -53,17 +123,41 @@ class RemoteChatRepository implements ChatRepository {
       _operatorId = previousOperator;
       rethrow;
     }
+    _sessionUser = null;
+    _tenantId = null;
+    _sessionGeneration++;
+    _messages.clear();
   }
 
   @override
   Future<List<Conversation>> fetchConversations() async {
-    final List<Map<String, dynamic>> rows = asJsonMaps(
-      await _client.get('/admin/v1/conversations'),
-    );
+    final int generation = _sessionGeneration;
+    final List<Map<String, dynamic>> rows = <Map<String, dynamic>>[];
+    int page = 1;
+    while (true) {
+      final dynamic result = await _client.get(
+        '/admin/v1/conversations',
+        query: <String, String>{'page': '$page', 'pageSize': '100'},
+      );
+      _ensureSession(generation);
+      if (result is List) {
+        rows.addAll(asJsonMaps(result));
+        break;
+      }
+      final Map<String, dynamic> payload = asJsonMap(result);
+      final List<Map<String, dynamic>> items = asJsonMaps(payload['items']);
+      rows.addAll(items);
+      final int total = _asInt(payload['total']) ?? rows.length;
+      if (items.isEmpty || rows.length >= total) {
+        break;
+      }
+      page++;
+    }
     _messages.clear();
     final List<Conversation> conversations = await Future.wait(
       rows.map(_loadConversation),
     );
+    _ensureSession(generation);
     conversations.sort((Conversation a, Conversation b) {
       return _sortKey(b).compareTo(_sortKey(a));
     });
@@ -71,6 +165,7 @@ class RemoteChatRepository implements ChatRepository {
   }
 
   Future<Conversation> _loadConversation(Map<String, dynamic> row) async {
+    final int generation = _sessionGeneration;
     final String id = row['conversationId']?.toString() ?? '';
     final String customerId = row['customerId']?.toString() ?? '';
     Map<String, dynamic>? customer;
@@ -85,6 +180,7 @@ class RemoteChatRepository implements ChatRepository {
         customer = null;
       }
     }
+    _ensureSession(generation);
     List<_TrackedMessage> messages = const <_TrackedMessage>[];
     if (id.isNotEmpty) {
       try {
@@ -93,6 +189,7 @@ class RemoteChatRepository implements ChatRepository {
         messages = const <_TrackedMessage>[];
       }
     }
+    _ensureSession(generation);
     return _conversationFrom(row, customer, messages);
   }
 
@@ -111,19 +208,24 @@ class RemoteChatRepository implements ChatRepository {
   }
 
   Future<List<_TrackedMessage>> _loadMessages(String conversationId) async {
+    final int generation = _sessionGeneration;
     final List<Map<String, dynamic>> rows = asJsonMaps(
       await _client.get('/admin/v1/conversations/$conversationId/messages'),
     );
     final List<_TrackedMessage> messages = rows.map(_messageFrom).toList();
-    _messages[conversationId] = messages;
+    if (generation == _sessionGeneration) {
+      _messages[conversationId] = messages;
+    }
     return messages;
   }
 
   @override
   Future<List<ChannelStatus>> fetchChannels() async {
+    final int generation = _sessionGeneration;
     final List<Map<String, dynamic>> rows = asJsonMaps(
       await _client.get('/admin/v1/apps'),
     );
+    _ensureSession(generation);
     if (rows.isNotEmpty) {
       final String? tenantId = rows.first['tenantId']?.toString();
       if (tenantId != null && tenantId.isNotEmpty) {
@@ -170,6 +272,29 @@ class RemoteChatRepository implements ChatRepository {
 
   @override
   Future<OperatorProfile> fetchProfile() async {
+    final int generation = _sessionGeneration;
+    final Map<String, dynamic>? user = _sessionUser;
+    if (user != null) {
+      final Map<String, dynamic> principal = asJsonMap(
+        await _client.get('/api/v1/auth/me'),
+      );
+      _ensureSession(generation);
+      _tenantId = principal['tenantId']?.toString() ?? _tenantId;
+      return OperatorProfile(
+        name:
+            user['displayName']?.toString() ??
+            user['account']?.toString() ??
+            _operatorId,
+        accountId: user['account']?.toString() ?? _operatorId,
+        role: switch (user['role']?.toString()) {
+          'owner' => '租户所有者',
+          'admin' => '管理员',
+          'agent' => '客服专员',
+          _ => user['role']?.toString() ?? '客服专员',
+        },
+        tenantName: _tenantId ?? '当前租户',
+      );
+    }
     if (_tenantId == null || _tenantId!.isEmpty) {
       try {
         final List<Map<String, dynamic>> apps = asJsonMaps(
@@ -197,6 +322,7 @@ class RemoteChatRepository implements ChatRepository {
     required String conversationId,
     required String text,
   }) async {
+    final int generation = _sessionGeneration;
     final Map<String, dynamic> created = asJsonMap(
       await _client.post(
         '/admin/v1/messages',
@@ -209,6 +335,7 @@ class RemoteChatRepository implements ChatRepository {
       ),
     );
     final _TrackedMessage message = _messageFrom(created);
+    _ensureSession(generation);
     _messages
         .putIfAbsent(conversationId, () => <_TrackedMessage>[])
         .add(message);
@@ -223,6 +350,7 @@ class RemoteChatRepository implements ChatRepository {
     int? durationSeconds,
     String text = '',
   }) async {
+    final int generation = _sessionGeneration;
     final String serverType = switch (type) {
       ChatMessageType.image => 'image',
       ChatMessageType.video => 'video',
@@ -257,6 +385,7 @@ class RemoteChatRepository implements ChatRepository {
       ),
     );
     final _TrackedMessage message = _messageFrom(created);
+    _ensureSession(generation);
     _messages
         .putIfAbsent(conversationId, () => <_TrackedMessage>[])
         .add(message);
@@ -265,19 +394,15 @@ class RemoteChatRepository implements ChatRepository {
 
   @override
   Future<void> markRead(String conversationId) async {
-    List<_TrackedMessage> messages =
-        _messages[conversationId] ?? await _loadMessages(conversationId);
+    await _client.post(
+      '/admin/v1/conversations/${Uri.encodeComponent(conversationId)}/read',
+    );
+    final List<_TrackedMessage> messages =
+        _messages[conversationId] ?? const <_TrackedMessage>[];
     for (final _TrackedMessage item in messages) {
-      if (item.senderRole != 'customer' || item.status == 'read') {
-        continue;
+      if (item.senderRole == 'customer') {
+        item.status = 'read';
       }
-      final Map<String, dynamic> updated = asJsonMap(
-        await _client.post(
-          '/admin/v1/messages/${item.message.id}/status',
-          body: const <String, dynamic>{'status': 'read'},
-        ),
-      );
-      item.status = updated['status']?.toString() ?? 'read';
     }
   }
 
@@ -287,13 +412,45 @@ class RemoteChatRepository implements ChatRepository {
     required TranslationLanguage source,
     required TranslationLanguage target,
   }) async {
+    final String targetCode = target == TranslationLanguage.auto
+        ? _oppositeLanguage(text, source)
+        : target.code;
+    try {
+      final List<Map<String, dynamic>> results = asJsonMaps(
+        await _client.post(
+          '/api/v1/translations',
+          timeout: const Duration(seconds: 5),
+          body: <String, dynamic>{
+            'items': <Map<String, dynamic>>[
+              <String, dynamic>{
+                'text': text,
+                'sourceLang': source.code,
+                'targetLang': targetCode,
+              },
+            ],
+          },
+        ),
+      );
+      final String translated = results.isEmpty
+          ? ''
+          : results.first['translatedText']?.toString().trim() ?? '';
+      if (translated.isNotEmpty) {
+        return translated;
+      }
+    } on ImApiException catch (error) {
+      if (error.statusCode == 401 || error.statusCode == 403) {
+        rethrow;
+      }
+    } on TimeoutException {
+      // The vecor LLM/Google endpoint is the compatibility fallback.
+    }
     final Map<String, dynamic> response = asJsonMap(
       await _client.post(
         '/admin/v1/translate',
         body: <String, dynamic>{
           'text': text,
           'sourceLang': source.code,
-          'targetLang': target.code,
+          'targetLang': targetCode,
         },
       ),
     );
@@ -308,6 +465,12 @@ class RemoteChatRepository implements ChatRepository {
     _client.close();
   }
 
+  void _ensureSession(int generation) {
+    if (generation != _sessionGeneration) {
+      throw ImApiException('登录状态已改变');
+    }
+  }
+
   String _senderId() {
     final String id = _operatorId.trim();
     if (id.isEmpty) {
@@ -315,6 +478,18 @@ class RemoteChatRepository implements ChatRepository {
     }
     return id;
   }
+}
+
+String _oppositeLanguage(String text, TranslationLanguage source) {
+  if (source != TranslationLanguage.auto) {
+    return source == TranslationLanguage.zhCN ||
+            source == TranslationLanguage.zhTW
+        ? 'en'
+        : 'zh-CN';
+  }
+  return text.runes.any((int value) => value >= 0x3400 && value <= 0x9FFF)
+      ? 'en'
+      : 'zh-CN';
 }
 
 class _TrackedMessage {
@@ -336,7 +511,10 @@ Conversation _conversationFrom(
   Map<String, dynamic>? customer,
   List<_TrackedMessage> messages,
 ) {
-  final String customerName = customer?['name']?.toString().trim() ?? '';
+  final String customerName =
+      row['customerName']?.toString().trim() ??
+      customer?['name']?.toString().trim() ??
+      '';
   final String subject = row['subject']?.toString().trim() ?? '';
   final String customerId = row['customerId']?.toString() ?? '';
   final String channelRaw = row['channel']?.toString().trim().isNotEmpty == true
@@ -346,12 +524,14 @@ Conversation _conversationFrom(
   final String status = row['status']?.toString() ?? '';
   final String forwardedTo = row['forwardedTo']?.toString().trim() ?? '';
   final _TrackedMessage? latest = messages.isEmpty ? null : messages.last;
-  final int unread = messages
-      .where(
-        (_TrackedMessage item) =>
-            item.senderRole == 'customer' && item.status != 'read',
-      )
-      .length;
+  final int unread =
+      _asInt(row['unreadCount']) ??
+      messages
+          .where(
+            (_TrackedMessage item) =>
+                item.senderRole == 'customer' && item.status != 'read',
+          )
+          .length;
   final DateTime? updatedAt = DateTime.tryParse(
     row['updatedAt']?.toString() ?? '',
   );
@@ -361,17 +541,23 @@ Conversation _conversationFrom(
         ? customerName
         : (subject.isNotEmpty ? subject : customerId),
     channel: platformFromLabel(channelRaw),
-    lastMessage: latest == null ? subject : _summary(latest.message),
+    lastMessage:
+        row['lastMessage']?.toString() ??
+        (latest == null ? subject : _summary(latest.message)),
     time: formatServerTime(
       latest?.sortAt?.toUtc().toIso8601String() ?? row['updatedAt']?.toString(),
     ),
-    status: _conversationStatus(status: status, assignee: assignee),
+    status: _conversationStatus(
+      status: status,
+      assignee: assignee,
+      latestSender: latest?.senderRole,
+    ),
     unreadCount: unread,
     needsReply:
         status != 'closed' &&
-        latest != null &&
-        latest.senderRole == 'customer' &&
-        latest.status != 'read',
+        (row['replyStatus'] != null
+            ? row['replyStatus'] == 'unreplied'
+            : latest?.senderRole == 'customer'),
     assignee: assignee.isEmpty ? '未认领' : assignee,
     forwardTargets: forwardedTo.isEmpty
         ? const <String>[]
@@ -411,7 +597,11 @@ _TrackedMessage _messageFrom(Map<String, dynamic> row) {
 ConversationStatus _conversationStatus({
   required String status,
   required String assignee,
+  String? latestSender,
 }) {
+  if (assignee.isEmpty && latestSender == 'ai') {
+    return ConversationStatus.ai;
+  }
   if (status == 'open' && assignee.isEmpty) {
     return ConversationStatus.waiting;
   }

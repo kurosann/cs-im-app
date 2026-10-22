@@ -10,6 +10,15 @@ import 'mock_data.dart';
 
 /// 纯前端阶段的数据实现：使用原型演示数据，无网络请求。
 class MockChatRepository implements ChatRepository {
+  @override
+  Future<void> login({
+    required String account,
+    required String password,
+  }) async {}
+
+  @override
+  Future<void> logout() async {}
+
   final List<Conversation> _conversations = List.of(mockConversations);
   final Map<String, List<ChatMessage>> _messages = {
     for (final MapEntry<String, List<ChatMessage>> entry

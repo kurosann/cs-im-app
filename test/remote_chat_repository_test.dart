@@ -89,11 +89,8 @@ void main() {
           });
         }
         if (request.method == 'POST' &&
-            path == '/admin/v1/messages/msg_1/status') {
-          final Map<String, dynamic> body =
-              jsonDecode(request.body) as Map<String, dynamic>;
-          expect(body['status'], 'read');
-          return _ok(<String, dynamic>{'messageId': 'msg_1', 'status': 'read'});
+            path == '/admin/v1/conversations/conv_1/read') {
+          return _ok(1);
         }
         return http.Response(
           jsonEncode(<String, dynamic>{'code': 'NOT_FOUND', 'message': path}),
@@ -171,7 +168,7 @@ void main() {
       requests.any(
         (http.Request request) =>
             request.method == 'POST' &&
-            request.url.path == '/admin/v1/messages/msg_1/status',
+            request.url.path == '/admin/v1/conversations/conv_1/read',
       ),
       isTrue,
     );

@@ -42,8 +42,18 @@ class ImApiClient {
     return _send('GET', path, query: query);
   }
 
-  Future<dynamic> post(String path, {Map<String, dynamic>? body}) {
-    return _send('POST', path, body: body);
+  Future<dynamic> post(
+    String path, {
+    Map<String, dynamic>? body,
+    bool authenticated = true,
+    Duration timeout = const Duration(seconds: 15),
+  }) {
+    return _send(
+      'POST',
+      path,
+      body: body,
+      authenticated: authenticated,
+    ).timeout(timeout);
   }
 
   Future<dynamic> _send(
@@ -51,13 +61,16 @@ class ImApiClient {
     String path, {
     Map<String, String>? query,
     Map<String, dynamic>? body,
+    bool authenticated = true,
   }) async {
-    if (token.trim().isEmpty) {
+    if (authenticated && token.trim().isEmpty) {
       throw ImApiException('缺少访问 Token');
     }
     final Uri uri = Uri.parse('$baseUrl$path').replace(queryParameters: query);
     final http.Request request = http.Request(method, uri);
-    request.headers['Authorization'] = 'Bearer ${token.trim()}';
+    if (authenticated) {
+      request.headers['Authorization'] = 'Bearer ${token.trim()}';
+    }
     request.headers['Accept'] = 'application/json';
     if (body != null) {
       request.headers['Content-Type'] = 'application/json';

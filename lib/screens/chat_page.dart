@@ -46,7 +46,13 @@ class _ChatPageState extends State<ChatPage> {
   void initState() {
     super.initState();
     _controller.addListener(_onDraftChanged);
-    unawaited(AppScope.read(context).checkTranslationProviderLatenciesIfDue());
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        unawaited(
+          AppScope.read(context).checkTranslationProviderLatenciesIfDue(),
+        );
+      }
+    });
   }
 
   @override
