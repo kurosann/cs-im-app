@@ -59,9 +59,12 @@ class RemoteChatRepository implements ChatRepository {
     final List<Map<String, dynamic>> rows = asJsonMaps(
       await _client.get('/admin/v1/conversations'),
     );
+    final List<Map<String, dynamic>> openRows = rows
+        .where((Map<String, dynamic> row) => row['status']?.toString() != 'closed')
+        .toList(growable: false);
     _messages.clear();
     final List<Conversation> conversations = await Future.wait(
-      rows.map(_loadConversation),
+      openRows.map(_loadConversation),
     );
     conversations.sort((Conversation a, Conversation b) {
       return _sortKey(b).compareTo(_sortKey(a));
